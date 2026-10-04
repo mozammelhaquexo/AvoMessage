@@ -2,9 +2,8 @@
  * components/companies/MyCompaniesCard.tsx — the viewer's own company list.
  *
  * The full card on your own profile, where the "Leave company" action lives.
- * The compact Home variant that used to share this file now lives in
- * `HomeCompanySection.tsx`, because it shows company POSTS rather than a
- * link-out list and is members-only.
+ * The company-post feed is a separate component — `CompanyPostsFeed.tsx`, shown
+ * on /companies — because it renders company posts rather than a link-out list.
  *
  * Leaving is server-authoritative: `removeMember` performs the whole
  * detach (teams + company group conversations + the membership row) in one

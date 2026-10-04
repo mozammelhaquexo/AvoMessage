@@ -27,6 +27,7 @@ import {
   ErrorState,
 } from "@/components/ui";
 import { NoCompanyYet } from "@/components/companies/NoCompanyYet";
+import { CompanyPostsFeed } from "@/components/companies/CompanyPostsFeed";
 import { apiGet } from "@/lib/api-client";
 import { companyRoleBadgeVariant, companyRoleLabel } from "@/lib/company-roles";
 import { formatRelative } from "@/lib/chat";
@@ -187,6 +188,16 @@ export function CompaniesDirectory({
           </div>
         )}
       </div>
+
+      {/* The company system lives in this section and nowhere else — Home shows
+          no company content at all. These are full `PostCard`s, so like,
+          comment, repost, bookmark and share all work; each read is
+          membership-gated on the server. Rendered only once the membership
+          list is known and non-empty, so the "ask your manager" state above
+          stays the only empty state on the page. */}
+      {!loading && !error && filtered.length > 0 && (
+        <CompanyPostsFeed memberships={filtered} />
+      )}
     </div>
   );
 }
