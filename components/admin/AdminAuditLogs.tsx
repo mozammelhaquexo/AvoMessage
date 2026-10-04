@@ -10,9 +10,9 @@ import {
   Button,
   Card,
   CardContent,
+  ErrorState,
   Icon,
   Input,
-  toast,
 } from "@/components/ui";
 import { apiGet } from "@/lib/api-client";
 import { formatRelative } from "@/lib/chat";
@@ -23,6 +23,9 @@ export function AdminAuditLogs() {
   const [rows, setRows] = useState<AuditLogRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Load failure is a rendered state, not just a toast: a failed fetch used
+  // to leave an empty list on screen, which reads as "no data".
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [action, setAction] = useState("");
   const [entityType, setEntityType] = useState("");
@@ -32,6 +35,7 @@ export function AdminAuditLogs() {
     async (c?: string, append = false) => {
       if (append) setLoadingMore(true);
       else setLoading(true);
+      setLoadError(null);
       try {
         const res = await apiGet<Paginated<AuditLogRow>>("/api/admin/audit-logs", {
           params: {
@@ -44,7 +48,7 @@ export function AdminAuditLogs() {
         setRows((prev) => (append ? [...prev, ...res.data] : res.data));
         setCursor(res.nextCursor);
       } catch (e) {
-        toast({ variant: "error", title: e instanceof Error ? e.message : "Could not load audit logs" });
+        setLoadError(e instanceof Error ? e.message : "Could not load audit logs");
       } finally {
         setLoading(false);
         setLoadingMore(false);
@@ -56,6 +60,16 @@ export function AdminAuditLogs() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  if (loadError && rows.length === 0) {
+    return (
+      <ErrorState
+        title="Couldn't load audit logs"
+        message={loadError}
+        onRetry={() => void load()}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -69,8 +83,11 @@ export function AdminAuditLogs() {
               id="audit-action"
               value={action}
               onChange={(e) => setAction(e.target.value)}
-              placeholder="e.g. user.suspend"
+              placeholder="e.g. admin.user_suspend"
             />
+            <p className="mt-1 text-caption text-ink-3">
+              Underscored, not dotted — <code>company.member_add</code>, <code>admin.report_resolve</code>.
+            </p>
           </div>
           <div className="min-w-44 flex-1">
             <label htmlFor="audit-entity" className="mb-1 block text-caption font-medium text-ink-2">

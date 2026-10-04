@@ -2,7 +2,7 @@
 
 import { useState, type ImgHTMLAttributes } from "react";
 import { cn } from "./utils";
-import type { IconName } from "./icons";
+import { Icon, type IconName } from "./icons";
 
 /**
  * Avatar — image with graceful fallback to initials. Optional presence dot.
@@ -79,6 +79,19 @@ const avatarSizes = {
   xl: "h-20 w-20 text-h2",
 } as const;
 
+/**
+ * Icon glyph size per avatar size, in px. `Icon` takes a number, so the
+ * fallback glyph needs its own scale — roughly half the circle, which reads as
+ * a mark rather than a button.
+ */
+const avatarIconSizes: Record<keyof typeof avatarSizes, number> = {
+  xs: 14,
+  sm: 16,
+  md: 22,
+  lg: 28,
+  xl: 40,
+};
+
 export interface AvatarProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "src" | "alt"> {
   src?: string | null;
   /** Display name — used for initials fallback and alt text. */
@@ -100,6 +113,7 @@ export function Avatar({
   name,
   size = "md",
   status,
+  fallbackIcon,
   className,
   ...rest
 }: AvatarProps) {
@@ -134,7 +148,7 @@ export function Avatar({
             avatarSizes[size],
           )}
         >
-          {initials(name)}
+          {fallbackIcon ? <Icon name={fallbackIcon} size={avatarIconSizes[size]} aria-hidden /> : initials(name)}
         </span>
       )}
       {status && (

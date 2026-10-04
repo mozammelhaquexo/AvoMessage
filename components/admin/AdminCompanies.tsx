@@ -17,6 +17,7 @@ import {
   Badge,
   Button,
   ConfirmDialog,
+  ErrorState,
   Icon,
   Input,
   Select,
@@ -35,6 +36,9 @@ export function AdminCompanies() {
   const [rows, setRows] = useState<CompanyRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Load failure is a rendered state, not just a toast: a failed fetch used
+  // to leave an empty list on screen, which reads as "no data".
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -51,6 +55,7 @@ export function AdminCompanies() {
     async (c?: string, append = false) => {
       if (append) setLoadingMore(true);
       else setLoading(true);
+      setLoadError(null);
       try {
         const res = await apiGet<Paginated<CompanyRow>>("/api/admin/companies", {
           params: {
@@ -63,7 +68,7 @@ export function AdminCompanies() {
         setRows((prev) => (append ? [...prev, ...res.data] : res.data));
         setCursor(res.nextCursor);
       } catch (e) {
-        toast({ variant: "error", title: e instanceof Error ? e.message : "Could not load companies" });
+        setLoadError(e instanceof Error ? e.message : "Could not load companies");
       } finally {
         setLoading(false);
         setLoadingMore(false);
@@ -88,6 +93,16 @@ export function AdminCompanies() {
       setBusy(false);
       setConfirming(null);
     }
+  }
+
+  if (loadError && rows.length === 0) {
+    return (
+      <ErrorState
+        title="Couldn't load companies"
+        message={loadError}
+        onRetry={() => void load()}
+      />
+    );
   }
 
   return (

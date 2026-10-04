@@ -143,16 +143,46 @@ export function AdminUserDetail({ userId }: { userId: string }) {
               up. Changing it takes a direct database edit.
             </p>
             <div className="flex items-center justify-between gap-3">
-              <span className="text-body-sm text-ink-2">Email verified</span>
+              <span className="text-body-sm text-ink-2">Verified badge</span>
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => void patch({ isVerified: !u.isVerified }, u.isVerified ? "Verification removed" : "Marked as verified")}
+                onClick={() => void patch({ isVerified: !u.isVerified }, u.isVerified ? "Badge removed" : "Badge granted")}
                 loading={busy}
               >
-                {u.isVerified ? "Unverify" : "Mark verified"}
+                {u.isVerified ? "Remove badge" : "Grant badge"}
               </Button>
             </div>
+            <p className="text-caption text-ink-3">
+              A cosmetic badge shown next to the name. It has no effect on sign-in.
+            </p>
+
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-body-sm text-ink-2">Email verified</span>
+              <span className="flex items-center gap-2">
+                <Badge variant={u.emailVerifiedAt ? "success" : "warning"}>
+                  {u.emailVerifiedAt ? new Date(u.emailVerifiedAt).toLocaleDateString() : "Not verified"}
+                </Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    void patch(
+                      { emailVerifiedAt: u.emailVerifiedAt ? null : new Date().toISOString() },
+                      u.emailVerifiedAt ? "Email verification cleared" : "Email marked verified",
+                    )
+                  }
+                  loading={busy}
+                >
+                  {u.emailVerifiedAt ? "Clear" : "Mark verified"}
+                </Button>
+              </span>
+            </div>
+            <p className="text-caption text-ink-3">
+              An account with no verification date cannot sign in. This is the control that
+              unblocks a user whose confirmation email never arrived.
+            </p>
+
             <p className="text-caption text-ink-3">
               Joined {new Date(u.createdAt).toLocaleDateString()} · suspending revokes all sessions.
             </p>

@@ -514,6 +514,12 @@ export interface PrismaClientLike {
   bookmark: ModelDelegate<Bookmark>;
   $transaction<T>(fn: (tx: TxClient) => Promise<T>): Promise<T>;
   $transaction<T extends any[]>(ops: [...T]): Promise<{ [K in keyof T]: Awaited<T[K]> }>;
+  /**
+   * Raw SQL escape hatch. Used for aggregate queries the typed delegates cannot
+   * express — grouping by day, counting distinct users inside a window — so the
+   * database does the counting instead of streaming every row into Node.
+   */
+  $queryRaw<T = unknown>(query: TemplateStringsArray, ...values: unknown[]): Promise<T>;
   $disconnect(): Promise<void>;
 }
 

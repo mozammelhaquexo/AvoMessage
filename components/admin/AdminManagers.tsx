@@ -20,6 +20,7 @@ import {
   Badge,
   Button,
   ConfirmDialog,
+  ErrorState,
   Icon,
   Input,
   Select,
@@ -51,6 +52,9 @@ export function AdminManagers() {
   const [rows, setRows] = useState<CompanyManagerRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Load failure is a rendered state, not just a toast: a failed fetch used
+  // to leave an empty list on screen, which reads as "no data".
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -67,6 +71,7 @@ export function AdminManagers() {
     async (c?: string, append = false) => {
       if (append) setLoadingMore(true);
       else setLoading(true);
+      setLoadError(null);
       try {
         const res = await apiGet<Paginated<CompanyManagerRow>>("/api/admin/managers", {
           params: {
@@ -79,10 +84,7 @@ export function AdminManagers() {
         setRows((prev) => (append ? [...prev, ...res.data] : res.data));
         setCursor(res.nextCursor);
       } catch (e) {
-        toast({
-          variant: "error",
-          title: e instanceof Error ? e.message : "Could not load managers",
-        });
+        setLoadError(e instanceof Error ? e.message : "Could not load managers");
       } finally {
         setLoading(false);
         setLoadingMore(false);
@@ -123,6 +125,16 @@ export function AdminManagers() {
       variant: "success",
       title: `Exported ${rows.length} row${rows.length === 1 ? "" : "s"}`,
     });
+  }
+
+  if (loadError && rows.length === 0) {
+    return (
+      <ErrorState
+        title="Couldn't load managers"
+        message={loadError}
+        onRetry={() => void load()}
+      />
+    );
   }
 
   return (

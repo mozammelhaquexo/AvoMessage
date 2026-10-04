@@ -515,7 +515,21 @@ export const adminUserUpdateSchema = z
   .object({
     isActive: z.boolean().optional(),
     platformRole: z.enum(['USER', 'ADMIN', 'SUPER_ADMIN']).optional(),
+    /**
+     * Platform "verified" badge (`User.isVerified`) — cosmetic.
+     *
+     * NOT the same thing as `emailVerifiedAt`: a user who never received the
+     * verification mail cannot sign in, and this flag does not change that.
+     */
     isVerified: z.boolean().optional(),
+    /**
+     * Email verification. `null` clears it, an ISO timestamp marks the address
+     * verified. This is the flag that gates sign-in, so it is the one an admin
+     * needs when a user is locked out — before this existed, the admin console
+     * offered a button labelled "Email verified" that silently wrote the
+     * cosmetic badge instead, leaving the account still unable to log in.
+     */
+    emailVerifiedAt: z.string().datetime().nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
 export type AdminUserUpdateInput = z.infer<typeof adminUserUpdateSchema>;

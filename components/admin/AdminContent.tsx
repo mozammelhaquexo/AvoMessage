@@ -15,6 +15,7 @@ import {
   Badge,
   Button,
   ConfirmDialog,
+  ErrorState,
   toast,
 } from "@/components/ui";
 import { apiDelete, apiGet } from "@/lib/api-client";
@@ -48,6 +49,9 @@ export function AdminPosts({
   const [rows, setRows] = useState<AdminPost[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Load failure is a rendered state, not just a toast: a failed fetch used
+  // to leave an empty list on screen, which reads as "no data".
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [deleting, setDeleting] = useState<AdminPost | null>(null);
   const [busy, setBusy] = useState(false);
@@ -55,6 +59,7 @@ export function AdminPosts({
   const load = useCallback(async (c?: string, append = false) => {
     if (append) setLoadingMore(true);
     else setLoading(true);
+    setLoadError(null);
     try {
       const res = await apiGet<Paginated<AdminPost>>("/api/admin/posts", {
         params: { limit: 25, ...(c ? { cursor: c } : {}), includeDeleted: true },
@@ -62,7 +67,7 @@ export function AdminPosts({
       setRows((prev) => (append ? [...prev, ...res.data] : res.data));
       setCursor(res.nextCursor);
     } catch (e) {
-      toast({ variant: "error", title: e instanceof Error ? e.message : "Could not load posts" });
+      setLoadError(e instanceof Error ? e.message : "Could not load posts");
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -90,6 +95,16 @@ export function AdminPosts({
       setBusy(false);
       setDeleting(null);
     }
+  }
+
+  if (loadError && rows.length === 0) {
+    return (
+      <ErrorState
+        title="Couldn't load posts"
+        message={loadError}
+        onRetry={() => void load()}
+      />
+    );
   }
 
   return (
@@ -174,6 +189,9 @@ export function AdminComments({
   const [rows, setRows] = useState<AdminComment[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Load failure is a rendered state, not just a toast: a failed fetch used
+  // to leave an empty list on screen, which reads as "no data".
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [deleting, setDeleting] = useState<AdminComment | null>(null);
   const [busy, setBusy] = useState(false);
@@ -181,6 +199,7 @@ export function AdminComments({
   const load = useCallback(async (c?: string, append = false) => {
     if (append) setLoadingMore(true);
     else setLoading(true);
+    setLoadError(null);
     try {
       const res = await apiGet<Paginated<AdminComment>>("/api/admin/comments", {
         params: { limit: 25, ...(c ? { cursor: c } : {}), includeDeleted: true },
@@ -188,7 +207,7 @@ export function AdminComments({
       setRows((prev) => (append ? [...prev, ...res.data] : res.data));
       setCursor(res.nextCursor);
     } catch (e) {
-      toast({ variant: "error", title: e instanceof Error ? e.message : "Could not load comments" });
+      setLoadError(e instanceof Error ? e.message : "Could not load comments");
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -216,6 +235,16 @@ export function AdminComments({
       setBusy(false);
       setDeleting(null);
     }
+  }
+
+  if (loadError && rows.length === 0) {
+    return (
+      <ErrorState
+        title="Couldn't load comments"
+        message={loadError}
+        onRetry={() => void load()}
+      />
+    );
   }
 
   return (

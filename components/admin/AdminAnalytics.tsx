@@ -5,7 +5,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle, LoadingState, Select, toast } from "@/components/ui";
+import { Card, CardContent, CardHeader, CardTitle, ErrorState, LoadingState, Select } from "@/components/ui";
 import { apiGet } from "@/lib/api-client";
 import { StatCard } from "@/components/data/StatCard";
 import { LineChart, BarChart } from "./Charts";
@@ -21,13 +21,19 @@ export function AdminAnalytics() {
   const [days, setDays] = useState("30");
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
+  // No synchronous state reset before the first await — see AdminDashboard for
+  // why (react-hooks/set-state-in-effect). The range selector and the retry
+  // button set `loading` themselves, because those are user events.
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       setData(await apiGet<AnalyticsData>("/api/admin/analytics", { params: { days } }));
+      setError(null);
     } catch (e) {
-      toast({ variant: "error", title: e instanceof Error ? e.message : "Could not load analytics" });
+      // `loading || !data` below used to pin the spinner on screen forever when
+      // this request failed, with the failure visible only as a fading toast.
+      setError(e instanceof Error ? e.message : "Could not load analytics");
     } finally {
       setLoading(false);
     }
@@ -37,21 +43,37 @@ export function AdminAnalytics() {
     void load();
   }, [load]);
 
+  const retry = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    void load();
+  }, [load]);
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h2 className="text-h3 font-semibold text-ink">Platform analytics</h2>
         <Select
           value={days}
-          onValueChange={setDays}
+          onValueChange={(v) => {
+            setLoading(true);
+            setError(null);
+            setDays(v);
+          }}
           options={RANGES}
           label="Date range"
           className="w-44"
         />
       </div>
 
-      {loading || !data ? (
+      {loading ? (
         <LoadingState message="Loading analytics…" />
+      ) : error || !data ? (
+        <ErrorState
+          title="Couldn't load analytics"
+          message={error ?? "No data returned."}
+          onRetry={retry}
+        />
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

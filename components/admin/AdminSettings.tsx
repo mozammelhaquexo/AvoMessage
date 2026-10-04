@@ -14,6 +14,7 @@ import {
   FormField,
   Icon,
   Input,
+  ErrorState,
   LoadingState,
   Textarea,
   toast,
@@ -32,6 +33,9 @@ function pretty(value: unknown): string {
 export function AdminSettings() {
   const [settings, setSettings] = useState<Setting[]>([]);
   const [loading, setLoading] = useState(true);
+  // Load failure is a rendered state, not just a toast: a failed fetch used to
+  // leave "No settings yet" on screen, which reads as an empty configuration.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Setting | null>(null);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -40,10 +44,11 @@ export function AdminSettings() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       setSettings(await apiGet<Setting[]>("/api/admin/settings"));
     } catch (e) {
-      toast({ variant: "error", title: e instanceof Error ? e.message : "Could not load settings" });
+      setLoadError(e instanceof Error ? e.message : "Could not load settings");
     } finally {
       setLoading(false);
     }
@@ -76,6 +81,15 @@ export function AdminSettings() {
   }
 
   if (loading) return <LoadingState message="Loading settings…" />;
+  if (loadError && settings.length === 0) {
+    return (
+      <ErrorState
+        title="Couldn't load settings"
+        message={loadError}
+        onRetry={() => void load()}
+      />
+    );
+  }
 
   return (
     <div className="flex max-w-3xl flex-col gap-4">

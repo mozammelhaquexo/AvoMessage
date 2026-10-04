@@ -198,10 +198,18 @@ export function AdminReportDetail({ reportId }: { reportId: string }) {
   if (loading) return <LoadingState message="Loading report…" />;
   if (error || !report) return <ErrorState message={error ?? "Report not found."} onRetry={() => void load()} />;
 
+  /**
+   * Shape of `report.snapshot`, built server-side by `reportTargetSnapshot`.
+   * POST/COMMENT/MESSAGE targets come back as `{ body, author, deleted }`;
+   * a USER target comes back as `{ user }` — there is no body to show.
+   * Both shapes have to be understood here, or a report against a live account
+   * renders as "Content unavailable".
+   */
   const snapshot = report.snapshot as null | {
     body?: string;
     author?: { name?: string; username?: string };
-    kind?: string;
+    user?: { name?: string; username?: string };
+    deleted?: boolean;
   };
 
   const actions: { id: "dismiss" | "delete_content" | "suspend_user"; label: string; hint: string; destructive?: boolean }[] = [
@@ -269,6 +277,25 @@ export function AdminReportDetail({ reportId }: { reportId: string }) {
                   </p>
                 )}
                 {snapshot.body && <p className="mt-1 whitespace-pre-wrap text-body-sm text-ink">{snapshot.body}</p>}
+                {snapshot.deleted && (
+                  <p className="mt-1 text-caption text-warning">This content has since been deleted.</p>
+                )}
+              </div>
+            ) : snapshot?.user ? (
+              // A report against a person, not a post. The account is the thing
+              // under review, so show the account — not an empty "content" box.
+              <div className="flex items-center gap-3 rounded-lg border border-line bg-surface-2 p-3">
+                <Avatar src={null} name={snapshot.user.name ?? "?"} size="md" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-ink">{snapshot.user.name}</p>
+                  <p className="text-caption text-ink-3">@{snapshot.user.username}</p>
+                </div>
+                <Link
+                  href={`/admin/users/${report.targetId}`}
+                  className="shrink-0 text-body-sm font-medium text-brand hover:underline"
+                >
+                  Open profile
+                </Link>
               </div>
             ) : (
               <EmptyState icon="eye" title="Content unavailable" description="The reported content may have been deleted already." compact />

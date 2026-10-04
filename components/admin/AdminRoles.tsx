@@ -8,8 +8,8 @@
  */
 "use client";
 
-import { useEffect, useState } from "react";
-import { Badge, Card, CardContent, CardHeader, CardTitle, EmptyState, Icon, LoadingState, toast } from "@/components/ui";
+import { useCallback, useEffect, useState } from "react";
+import { Badge, Card, CardContent, CardHeader, CardTitle, EmptyState, ErrorState, Icon, LoadingState } from "@/components/ui";
 import { apiGet } from "@/lib/api-client";
 import { companyRoleLabel } from "@/lib/company-roles";
 import { BarChart } from "./Charts";
@@ -46,15 +46,40 @@ function matrixLabel(role: string): string {
 export function AdminRoles() {
   const [data, setData] = useState<RolesOverview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    apiGet<RolesOverview>("/api/admin/roles")
-      .then(setData)
-      .catch((e) => toast({ variant: "error", title: e instanceof Error ? e.message : "Could not load roles" }))
-      .finally(() => setLoading(false));
+  // No synchronous state reset before the first await — see AdminDashboard for
+  // why (react-hooks/set-state-in-effect); `loading` already starts true and the
+  // retry button performs the reset as a user event.
+  const load = useCallback(async () => {
+    try {
+      setData(await apiGet<RolesOverview>("/api/admin/roles"));
+      setError(null);
+    } catch (e) {
+      // Same trap as the dashboard: `loading || !data` would spin forever.
+      setError(e instanceof Error ? e.message : "Could not load roles");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  if (loading || !data) return <LoadingState message="Loading roles…" />;
+  useEffect(() => {
+    // Mount-only initial fetch; `load` awaits before touching state, so nothing
+    // cascades. The rule cannot see across the call boundary.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-only initial fetch
+    void load();
+  }, [load]);
+
+  const retry = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    void load();
+  }, [load]);
+
+  if (loading) return <LoadingState message="Loading roles…" />;
+  if (error || !data) {
+    return <ErrorState title="Couldn't load roles" message={error ?? "No data returned."} onRetry={retry} />;
+  }
 
   return (
     <div className="flex flex-col gap-6">

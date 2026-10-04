@@ -364,3 +364,18 @@ export function postSummary(
     viewerState: viewerState ?? { liked: false, bookmarked: false },
   };
 }
+
+/**
+ * Undo the title prefix an announcement post carries.
+ *
+ * A platform announcement is a real `Post`, and a Post has no title column — so
+ * `createPlatformAnnouncement` stores `${title}\n\n${body}` and lets the public
+ * feed show the title as the first line. The admin console renders the title
+ * from the SystemSetting entry separately, so leaving the prefix in place makes
+ * it appear twice. Pure, so the boundary cases are testable without a database.
+ */
+export function stripAnnouncementTitle(body: string, title: string | null | undefined): string {
+  if (!title) return body;
+  const prefix = `${title}\n\n`;
+  return body.startsWith(prefix) ? body.slice(prefix.length) : body;
+}

@@ -46,7 +46,7 @@ import type {
   TeamMember,
   User,
 } from "@/lib/prisma-types";
-import { postSummary, publicCompany, publicUser } from "./serialize";
+import { postSummary, publicCompany, publicUser, stripAnnouncementTitle } from "./serialize";
 import type {
   AdminAnnouncementCreateInput,
   AdminCompanyUpdateInput,
@@ -239,6 +239,11 @@ export async function updateUser(
   if (input.isActive !== undefined) data.isActive = input.isActive;
   if (input.platformRole !== undefined) data.platformRole = input.platformRole;
   if (input.isVerified !== undefined) data.isVerified = input.isVerified;
+  // Email verification gates sign-in, so it is the field that actually unblocks
+  // a locked-out user. `null` clears it; an ISO string marks it verified.
+  if (input.emailVerifiedAt !== undefined) {
+    data.emailVerifiedAt = input.emailVerifiedAt === null ? null : new Date(input.emailVerifiedAt);
+  }
 
   const updated = await db.user.update({ where: { id: targetId }, data });
 
@@ -1068,35 +1073,54 @@ function dayKey(d: Date): string {
 
 export async function analytics(actor: Actor, days = 30) {
   assertAdmin(actor);
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const [logins, posts, messages, signups] = await Promise.all([
-    db.loginActivity.findMany({
-      where: { success: true, createdAt: { gte: since } },
-      select: { userId: true, createdAt: true },
-    }),
-    db.post.findMany({
-      where: { createdAt: { gte: since }, deletedAt: null },
-      select: { createdAt: true },
-    }),
-    db.message.findMany({
-      where: { createdAt: { gte: since }, deletedAt: null },
-      select: { createdAt: true },
-    }),
-    db.user.findMany({
-      where: { createdAt: { gte: since } },
-      select: { createdAt: true },
-    }),
+  const now = Date.now();
+  const since = new Date(now - days * 24 * 3600e3);
+  const dayAgo = new Date(now - 24 * 3600e3);
+  const weekAgo = new Date(now - 7 * 24 * 3600e3);
+
+  // Aggregate in Postgres.
+  //
+  // This used to `findMany` every login, post, message and signup in the window
+  // and bucket them in Node. Nothing bounded it: on a busy instance a single
+  // dashboard load streamed the entire 30-day activity history into the
+  // function's memory, which is exactly the shape that OOMs a serverless
+  // instance. GROUP BY + count(DISTINCT …) moves the work to the database and
+  // returns at most `days` rows.
+  //
+  // `AT TIME ZONE 'UTC'` is load-bearing: `dateKey` below buckets by the UTC
+  // calendar day (the previous implementation used `toISOString().slice(0,10)`),
+  // and `date_trunc` would otherwise truncate in the server's local timezone.
+  const [active, postsPerDay, messagesPerDay, signupsPerDay] = await Promise.all([
+    db.$queryRaw<{ dau: number; wau: number; mau: number }[]>`
+      SELECT
+        count(DISTINCT "userId") FILTER (WHERE "createdAt" >= ${dayAgo})::int  AS "dau",
+        count(DISTINCT "userId") FILTER (WHERE "createdAt" >= ${weekAgo})::int AS "wau",
+        count(DISTINCT "userId")::int                                          AS "mau"
+      FROM "LoginActivity"
+      WHERE "success" = true AND "createdAt" >= ${since}`,
+    db.$queryRaw<{ date: string; count: number }[]>`
+      SELECT to_char(date_trunc('day', "createdAt" AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS "date",
+             count(*)::int AS "count"
+      FROM "Post"
+      WHERE "createdAt" >= ${since} AND "deletedAt" IS NULL
+      GROUP BY 1`,
+    db.$queryRaw<{ date: string; count: number }[]>`
+      SELECT to_char(date_trunc('day', "createdAt" AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS "date",
+             count(*)::int AS "count"
+      FROM "Message"
+      WHERE "createdAt" >= ${since} AND "deletedAt" IS NULL
+      GROUP BY 1`,
+    db.$queryRaw<{ date: string; count: number }[]>`
+      SELECT to_char(date_trunc('day', "createdAt" AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS "date",
+             count(*)::int AS "count"
+      FROM "User"
+      WHERE "createdAt" >= ${since}
+      GROUP BY 1`,
   ]);
 
-  const now = Date.now();
-  const inWindow = (d: Date, ms: number) => now - d.getTime() <= ms;
-  const dau = new Set(logins.filter((l) => l.userId && inWindow(l.createdAt, 24 * 3600e3)).map((l) => l.userId)).size;
-  const wau = new Set(logins.filter((l) => l.userId && inWindow(l.createdAt, 7 * 24 * 3600e3)).map((l) => l.userId)).size;
-  const mau = new Set(logins.filter((l) => l.userId).map((l) => l.userId)).size;
-
-  const perDay = (rows: { createdAt: Date }[]) => {
-    const map = new Map<string, number>();
-    for (const r of rows) map.set(dayKey(r.createdAt), (map.get(dayKey(r.createdAt)) ?? 0) + 1);
+  /** Zero-fill the series so the charts have one point per day, in order. */
+  const perDay = (rows: { date: string; count: number }[]) => {
+    const map = new Map(rows.map((r) => [r.date, Number(r.count)]));
     const out: { date: string; count: number }[] = [];
     for (let i = days - 1; i >= 0; i--) {
       const key = dayKey(new Date(now - i * 24 * 3600e3));
@@ -1105,13 +1129,14 @@ export async function analytics(actor: Actor, days = 30) {
     return out;
   };
 
+  const a = active[0] ?? { dau: 0, wau: 0, mau: 0 };
   return {
-    dau,
-    wau,
-    mau,
-    postsPerDay: perDay(posts),
-    messagesPerDay: perDay(messages),
-    signupsPerDay: perDay(signups),
+    dau: Number(a.dau),
+    wau: Number(a.wau),
+    mau: Number(a.mau),
+    postsPerDay: perDay(postsPerDay),
+    messagesPerDay: perDay(messagesPerDay),
+    signupsPerDay: perDay(signupsPerDay),
   };
 }
 
@@ -1183,7 +1208,10 @@ export async function listPlatformAnnouncements(actor: Actor) {
   return entries
     .map((e) => {
       const p = byId.get(e.postId);
-      return p ? { ...postSummary(p), title: e.title } : null;
+      // The Post body carries the title as its first line (a Post has no title
+      // column); the title is rendered separately below, so strip the prefix or
+      // the admin list shows it twice.
+      return p ? { ...postSummary(p), title: e.title, body: stripAnnouncementTitle(p.body, e.title) } : null;
     })
     .filter(Boolean);
 }

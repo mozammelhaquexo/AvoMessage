@@ -4,9 +4,9 @@
  */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle, Icon, LoadingState, toast } from "@/components/ui";
+import { Card, CardContent, CardHeader, CardTitle, ErrorState, Icon, LoadingState } from "@/components/ui";
 import { apiGet } from "@/lib/api-client";
 import { StatCard } from "@/components/data/StatCard";
 import { LineChart, BarChart } from "./Charts";
@@ -16,26 +16,49 @@ export function AdminDashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const [s, a] = await Promise.all([
-          apiGet<DashboardStats>("/api/admin/dashboard"),
-          apiGet<AnalyticsData>("/api/admin/analytics", { params: { days: 30 } }),
-        ]);
-        setStats(s);
-        setAnalytics(a);
-      } catch (e) {
-        toast({ variant: "error", title: e instanceof Error ? e.message : "Could not load dashboard" });
-      } finally {
-        setLoading(false);
-      }
-    })();
+  // No synchronous state reset before the first await on purpose: resetting
+  // `loading`/`error` in the effect body is a cascading render
+  // (react-hooks/set-state-in-effect), and `loading` already starts true.
+  // The retry button below does the reset, because that one is a user event.
+  const load = useCallback(async () => {
+    try {
+      const [s, a] = await Promise.all([
+        apiGet<DashboardStats>("/api/admin/dashboard"),
+        apiGet<AnalyticsData>("/api/admin/analytics", { params: { days: 30 } }),
+      ]);
+      setStats(s);
+      setAnalytics(a);
+      setError(null);
+    } catch (e) {
+      // A toast alone was the bug here: it faded, `stats` stayed null, and the
+      // `loading || !stats` guard below kept the spinner up forever.
+      setError(e instanceof Error ? e.message : "Could not load dashboard");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  if (loading || !stats) return <LoadingState message="Loading dashboard…" />;
+  useEffect(() => {
+    // Mount-only initial fetch. The rule flags `void load()` as a synchronous
+    // setState, but `load` awaits before touching state, so no render cascades
+    // here — it cannot see across the call boundary.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-only initial fetch
+    void load();
+  }, [load]);
+
+  // Reset is a user event here, so it is allowed to set state synchronously.
+  const retry = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    void load();
+  }, [load]);
+
+  if (loading) return <LoadingState message="Loading dashboard…" />;
+  if (error || !stats) {
+    return <ErrorState title="Couldn't load the dashboard" message={error ?? "No data returned."} onRetry={retry} />;
+  }
 
   return (
     <div className="flex flex-col gap-6">

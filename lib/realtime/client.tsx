@@ -110,9 +110,15 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const roomsRef = useRef(new Map<string, number>());
 
   useEffect(() => {
-    const s = io({
+    // `NEXT_PUBLIC_SOCKET_URL` is what lets the realtime server live on a
+    // different host from the Next app. That matters because Socket.io needs a
+    // long-lived Node process, which serverless hosts (Vercel) do not provide —
+    // there, the browser's same-origin WebSocket has nothing to talk to and
+    // realtime silently never connects. Unset (the default) keeps the original
+    // same-origin behaviour, where the custom server serves Next + Socket.io on
+    // one port.
+    const s = io(process.env.NEXT_PUBLIC_SOCKET_URL || undefined, {
       withCredentials: true,
-      // Same-origin: the custom server serves Next + Socket.io on one port.
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1_000,
