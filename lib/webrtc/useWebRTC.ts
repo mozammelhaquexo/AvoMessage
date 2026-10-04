@@ -30,7 +30,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { Socket } from 'socket.io-client';
+import type { RealtimeSocket } from '@/lib/realtime/contract';
 import { useSocket, useRealtimeEvent } from '@/lib/realtime/client';
 import {
   ClientToServer,
@@ -137,7 +137,7 @@ export function useWebRTC(options: UseWebRTCOptions): UseWebRTC {
   // created once but must observe current values, so the mirror is written from
   // an effect. Assigning during render is a React Compiler violation and can
   // tear under concurrent rendering.
-  const socketRef = useRef<Socket | null>(socket);
+  const socketRef = useRef<RealtimeSocket | null>(socket);
   const joinRoomRef = useRef(joinRoom);
   const leaveRoomRef = useRef(leaveRoom);
   const stateRef = useRef(callState);

@@ -17,6 +17,13 @@
  * subscriptions survive reconnects. Rooms are reference-counted so multiple
  * hooks can share one room safely.
  *
+ * Transport: the connection is created by `./transport.ts`, which returns
+ * either a Socket.io socket or a REST poller (`./polling.ts`). Everything below
+ * is written against the six-member contract in `./contract.ts`, so the same
+ * hooks serve both. The one hook that must know the difference is `usePresence`
+ * — a poller has no push channel, so it refreshes its own snapshot instead of
+ * waiting for `presence:update` events that will never arrive.
+ *
  * Auth: the session cookie is httpOnly and sent automatically
  * (`withCredentials`). There is no token in JS to leak.
  */
@@ -33,7 +40,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
-import { io, type Socket } from 'socket.io-client';
+import { createRealtimeSocket } from './transport';
+import type { RealtimeSocket } from './contract';
 import {
   ClientToServer,
   ServerToClient,
@@ -53,7 +61,13 @@ export type ConnectionStatus =
   | 'error';
 
 interface SocketContextValue {
-  socket: Socket | null;
+  /**
+   * The live connection. Either a Socket.io socket or the REST poller — see
+   * `lib/realtime/transport.ts`. Consumers never need to know which; the only
+   * place that does is `usePresence`, which must poll when there is no push
+   * channel to keep its map fresh.
+   */
+  socket: RealtimeSocket | null;
   status: ConnectionStatus;
   lastError: string | null;
   joinRoom(room: string): void;
@@ -102,31 +116,22 @@ function roomLeaveEvent(room: string): { event: string; payload: object } | null
 }
 
 export function SocketProvider({ children }: { children: ReactNode }) {
-  const [socket, setSocket] = useState<Socket | null>(null);
+  const [socket, setSocket] = useState<RealtimeSocket | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [lastError, setLastError] = useState<string | null>(null);
-  const socketRef = useRef<Socket | null>(null);
+  const socketRef = useRef<RealtimeSocket | null>(null);
   /** room → subscriber count (reference-counted across hooks). */
   const roomsRef = useRef(new Map<string, number>());
 
   useEffect(() => {
-    // `NEXT_PUBLIC_SOCKET_URL` is what lets the realtime server live on a
-    // different host from the Next app. That matters because Socket.io needs a
-    // long-lived Node process, which serverless hosts (Vercel) do not provide —
-    // there, the browser's same-origin WebSocket has nothing to talk to and
-    // realtime silently never connects. Unset (the default) keeps the original
-    // same-origin behaviour, where the custom server serves Next + Socket.io on
-    // one port.
-    const s = io(process.env.NEXT_PUBLIC_SOCKET_URL || undefined, {
-      withCredentials: true,
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1_000,
-      reconnectionDelayMax: 30_000,
-      randomizationFactor: 0.5,
-      timeout: 20_000,
-      transports: ['websocket', 'polling'],
-    });
+    // `createRealtimeSocket` picks the transport: Socket.io when a realtime
+    // server is reachable, REST polling when it is not. The choice matters
+    // because Socket.io needs a long-lived Node process, which serverless
+    // hosts (Vercel) do not provide — there, `/socket.io` answers with the
+    // HTML app and the socket never connects, which used to leave the
+    // deployment with no live updates at all. See ./transport.ts for the
+    // selection rules and ./polling.ts for what the fallback preserves.
+    const s = createRealtimeSocket();
     socketRef.current = s;
     setSocket(s);
 
@@ -234,36 +239,65 @@ export function useRealtimeEvent(
 // Presence
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * How often a polling client re-reads presence. Shorter than the server's
+ * 30 s heartbeat so a status change is picked up promptly, long enough that
+ * the request is noise. Only used when the transport is `polling`.
+ */
+const PRESENCE_REFRESH_MS = 15_000;
+
 /** Live presence for the given user ids (seed initial state via REST). */
 export function usePresence(userIds: string[]): Record<string, PresencePayload> {
+  const { socket } = useSocket();
   const [map, setMap] = useState<Record<string, PresencePayload>>({});
   const idsKey = useMemo(() => [...userIds].sort().join(','), [userIds]);
+  const transport = socket?.transport;
 
   // Seed an initial snapshot over REST. The socket only carries presence for
   // shared conversation/company rooms (broadcastPresence in ./server), so
   // without this a viewer sees nothing at all for users they share no room
   // with — most of the feed, profiles, and the admin lists.
+  //
+  // On the polling transport there is no push channel at all, so this effect
+  // also owns the refresh loop. `force` is what separates the two cases: a
+  // socket-era value must never be clobbered by a slower snapshot, whereas on
+  // a poller the snapshot IS the only source of truth.
   useEffect(() => {
     if (!idsKey) return;
     let cancelled = false;
-    apiGet<{ items: PresencePayload[] }>(`/api/presence?ids=${encodeURIComponent(idsKey)}`)
-      .then((res) => {
+
+    const refresh = async (force: boolean): Promise<void> => {
+      try {
+        const res = await apiGet<{ items: PresencePayload[] }>(
+          `/api/presence?ids=${encodeURIComponent(idsKey)}`,
+        );
         if (cancelled) return;
         setMap((prev) => {
           const next = { ...prev };
           for (const item of res.items ?? []) {
-            // A live socket update that landed while this request was in
-            // flight is fresher than the snapshot — never overwrite it.
-            if (!next[item.userId]) next[item.userId] = item;
+            if (force || !next[item.userId]) next[item.userId] = item;
           }
           return next;
         });
-      })
-      .catch(() => undefined);
+      } catch {
+        /* presence is decoration — a failed read just leaves the dot unknown */
+      }
+    };
+
+    void refresh(false);
+
+    if (transport !== 'polling') {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const timer = setInterval(() => void refresh(true), PRESENCE_REFRESH_MS);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [idsKey]);
+  }, [idsKey, transport]);
 
   useRealtimeEvent(ServerToClient.PRESENCE_UPDATE, (payload: PresencePayload) => {
     if (!payload || typeof payload.userId !== 'string') return;

@@ -7,14 +7,61 @@ Owner: Realtime Engineer. Layout follows `docs/ARCHITECTURE.md` §3.
 | File | Role |
 |---|---|
 | `lib/realtime/events.ts` | Shared event catalog — room-name helpers, event-name constants, zod schemas for every client→server payload, TS types for server→client payloads. Imported by both sides: **no drift by construction**. |
+| `lib/realtime/contract.ts` | The six-member `RealtimeSocket` contract that both transports satisfy (`transport`, `connected`, `on`, `off`, `emit`, `connect`, `disconnect`). Exists so neither implementation imports the other at runtime. |
 | `lib/realtime/server.ts` | Socket.io server. `attachRealtime(httpServer, deps?)` / `getRealtime()`. Owns handshake auth, membership-checked joins, presence, typing, messages, notifications fan-out, feed fan-out, call signaling, rate limits, payload validation. |
 | `lib/realtime/store.ts` | Lazy Prisma accessor (`getDb()`, fail-closed while `@prisma/client` is ungenerated) + `verifyHandshakeSession()` implementing the ARCHITECTURE.md §2.2 cookie protocol (`avo_session=<raw>.<sig>`, HMAC-SHA256, SHA-256 tokenHash lookup, revoked/expiry/active checks, debounced sliding refresh). Self-contained on purpose: `lib/auth/session.ts` is Next/`@/`-bound; keep the two in sync (cookie name, hash/HMAC schemes). |
 | `lib/realtime/client.tsx` | Browser side: `SocketProvider`, `useSocket`, `useRealtimeEvent`, `usePresence`, `usePublishPresence`, `useTyping`, `useConversation` (optimistic send, clientId dedupe, delivery/read), `useNotifications`, `useFeedUpdates`. Cookie auth (`withCredentials`), exponential-backoff reconnect, reference-counted rooms, resubscribe on reconnect. |
+| `lib/realtime/transport.ts` | Picks the transport: `NEXT_PUBLIC_REALTIME_TRANSPORT` (`auto` \| `socket` \| `poll`) or, on `auto`, Socket.io with an in-place switch to polling after two failed connection attempts. Also reads `NEXT_PUBLIC_REALTIME_POLL_MS`. |
+| `lib/realtime/polling.ts` | REST implementation of the contract, for hosts that cannot run a long-lived Node process. See below. |
 | `server.ts` (root) | Custom HTTP server: Next.js + Socket.io on one port. |
 | `tsconfig.server.json` | Compiled-production build → `dist-server/` (runnable with plain `node`). |
 | `scripts/socket-smoke.mjs` | Smoke + integration test (see below). |
 
 Layout choice: `lib/realtime/server.ts` (not `server/socket.ts`) — matches ARCHITECTURE.md.
+
+## Which transport is live, and why it matters
+
+Socket.io needs a long-lived Node process. Serverless hosts (Vercel) do not
+provide one — they run Next route handlers as functions and never execute
+`server.ts`. There, `/socket.io` is not a handshake at all. Same request, both
+hosts:
+
+```
+local   GET /socket.io/?EIO=4&transport=polling
+        → 200  `0{"sid":"YiI7CPxsMvd_qMzMAAAA","upgrades":["websocket"],…}`
+Vercel  GET /socket.io/?EIO=4&transport=polling
+        → 308  `Redirecting...`      (the HTML app)
+```
+
+Before `polling.ts` existed this was not a cosmetic gap: `useConversation`'s
+`sendMessage` transmits over the socket, so on Vercel **sending a message failed
+silently** — the optimistic bubble stayed pending forever. Live updates, read
+receipts, unread badges and presence were all dead too.
+
+`lib/realtime/polling.ts` re-implements the contract on top of the REST API, so
+`client.tsx` and every hook above it are unchanged. What it carries:
+
+| Preserved | How |
+|---|---|
+| New / edited / deleted messages | `GET /api/conversations/:id/messages` diffed against a snapshot |
+| Sending (with `clientId` idempotency) | `POST /api/conversations/:id/messages` |
+| Read receipts | members' `lastReadAt` from `GET /api/conversations/:id` |
+| Unread badges | `unreadCount` from `GET /api/conversations` → `conversation:updated` |
+| Notifications | new ids from `GET /api/notifications` |
+| Presence | `POST /api/presence` (added for this) + a 30 s heartbeat |
+
+Not preserved, by design:
+
+- **Typing indicators** — pure ephemeral fan-out with nothing persisted to read.
+  `useTyping` returns an empty list; its emits are dropped.
+- **`message:delivered`** — ephemeral upstream too (never persisted).
+- **Call signalling** — that feature is being removed.
+- **Sub-second latency** — updates land within one poll interval (default 3 s).
+
+Deployment: set `NEXT_PUBLIC_REALTIME_TRANSPORT=poll` on Vercel so the doomed
+Socket.io attempt is skipped entirely. `auto` also works (it falls back after
+two failed attempts), and is the right default for any host not yet measured.
+Everything the transport does is covered by `tests/realtime-polling.test.ts`.
 
 ## Run
 

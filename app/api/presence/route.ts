@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { handle, ok } from '@/lib/api';
+import { handle, ok, parseJson } from '@/lib/api';
 import { prisma } from '@/lib/db';
 import { requireSession } from '@/lib/permissions';
+import { presenceUpdateSchema } from '@/lib/validation';
 import type { PresencePayload } from '@/lib/realtime/events';
 
 /**
@@ -57,4 +58,45 @@ export const GET = handle(async (req: NextRequest): Promise<NextResponse> => {
   });
 
   return ok({ items });
+});
+
+/**
+ * POST /api/presence — body `{ status?: 'ONLINE' | 'AWAY' | 'DO_NOT_DISTURB' }`.
+ *
+ * The write half of the REST realtime transport (`lib/realtime/polling.ts`).
+ * A Socket.io connection marks its user online as a side effect of connecting;
+ * a poller has no connection to hang that off, so it publishes here instead —
+ * immediately on connect, then on a 30 s heartbeat. Without this every user of
+ * a polling deployment would read as OFFLINE forever, because nothing would
+ * ever write a `UserPresence` row.
+ *
+ * Omitted `status` is a heartbeat: touch `lastSeenAt`, keep the current
+ * status. `OFFLINE` is deliberately not settable — going offline is the
+ * server's inference when a client stops beating, not a client's claim.
+ */
+export const POST = handle(async (req: NextRequest): Promise<NextResponse> => {
+  const { user } = await requireSession(req);
+  const input = await parseJson(req, presenceUpdateSchema);
+
+  const now = new Date();
+  const row = await prisma.userPresence.upsert({
+    where: { userId: user.id },
+    create: {
+      userId: user.id,
+      status: input.status ?? 'ONLINE',
+      lastSeenAt: now,
+    },
+    update: {
+      ...(input.status ? { status: input.status } : {}),
+      lastSeenAt: now,
+    },
+    select: { userId: true, status: true, lastSeenAt: true },
+  });
+
+  const presence: PresencePayload = {
+    userId: row.userId,
+    status: row.status,
+    lastSeenAt: row.lastSeenAt.toISOString(),
+  };
+  return ok({ presence });
 });

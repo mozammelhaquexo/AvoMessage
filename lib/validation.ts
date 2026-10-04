@@ -495,6 +495,19 @@ export const conversationMuteSchema = z.object({
 });
 export type ConversationMuteInput = z.infer<typeof conversationMuteSchema>;
 
+/**
+ * Body of `POST /api/presence`.
+ *
+ * Mirrors `PresenceUpdateSchema` in `lib/realtime/events.ts`, minus `OFFLINE`:
+ * a client may never declare itself offline, because offline is what the
+ * server decides when a client stops beating. An omitted status is a
+ * heartbeat — touch `lastSeenAt`, keep the current status.
+ */
+export const presenceUpdateSchema = z.object({
+  status: z.enum(['ONLINE', 'AWAY', 'DO_NOT_DISTURB']).optional(),
+});
+export type PresenceUpdateInput = z.infer<typeof presenceUpdateSchema>;
+
 // ─── Calls (Backend Engineer B) ─────────────────────────────────────────────
 
 export const callCreateSchema = z.object({
