@@ -36,6 +36,10 @@ export const ErrorCodes = {
   OTP_USED: 'OTP_USED',
   OTP_ATTEMPTS_EXCEEDED: 'OTP_ATTEMPTS_EXCEEDED',
   OTP_RESEND_TOO_SOON: 'OTP_RESEND_TOO_SOON',
+  DB_UNREACHABLE: 'DB_UNREACHABLE',
+  DB_AUTH_FAILED: 'DB_AUTH_FAILED',
+  DB_SCHEMA_MISSING: 'DB_SCHEMA_MISSING',
+  DB_PERMISSION_DENIED: 'DB_PERMISSION_DENIED',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
 } as const;
 
@@ -157,6 +161,66 @@ export class RateLimitedError extends HttpError {
   public readonly retryAfterMs: number;
 }
 
+// ─── Database failures ──────────────────────────────────────────────────────
+
+/**
+ * Codes that mean "the deployment cannot use its database", as opposed to
+ * "this request was bad".
+ *
+ * Every one of these used to fall through to the generic branch and answer
+ * `500 INTERNAL_ERROR` — indistinguishable from a bug in the handler. A
+ * deployment whose `DATABASE_URL` names the wrong host, the wrong pooler
+ * region, a database where the schema was never applied, or a role without
+ * privileges therefore looked identical: "Internal server error" on every
+ * write, with nothing to act on. This is the same failure mode
+ * `DatabaseNotConfiguredError` (lib/db.ts) already handles for an *unset*
+ * variable; these cover a variable that is set but unusable.
+ *
+ * Covers both layers, because with a driver adapter either can surface:
+ * Prisma's `P####` request/initialisation codes, and the raw Postgres SQLSTATE
+ * or Node network code from the underlying `pg` connection.
+ *
+ * The messages are fixed strings, never echoes of the driver's message, so no
+ * host, port, user, database name or certificate detail can leak to a client.
+ */
+const DB_FAILURES: Record<string, { code: string; message: string }> = {
+  // Prisma — initialisation and connection
+  P1000: { code: ErrorCodes.DB_AUTH_FAILED, message: 'The database rejected the configured credentials. Check DATABASE_URL.' },
+  P1001: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database cannot be reached from this host. Check DATABASE_URL.' },
+  P1002: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database connection timed out. Check DATABASE_URL.' },
+  P1003: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database named in DATABASE_URL does not exist.' },
+  P1008: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database operation timed out.' },
+  P1010: { code: ErrorCodes.DB_AUTH_FAILED, message: 'Access to the database was denied. Check DATABASE_URL.' },
+  P1017: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database closed the connection.' },
+  P2024: { code: ErrorCodes.DB_UNREACHABLE, message: 'Timed out acquiring a database connection from the pool.' },
+  // Prisma — the connection works but the schema does not match the code
+  P2021: { code: ErrorCodes.DB_SCHEMA_MISSING, message: 'A table this application needs does not exist. Run supabase.sql (or `prisma migrate deploy`) against the database in DATABASE_URL.' },
+  P2022: { code: ErrorCodes.DB_SCHEMA_MISSING, message: 'A column this application needs does not exist. Run supabase.sql (or `prisma migrate deploy`) against the database in DATABASE_URL.' },
+  // Postgres SQLSTATE
+  '28000': { code: ErrorCodes.DB_AUTH_FAILED, message: 'The database rejected the configured credentials. Check DATABASE_URL.' },
+  '28P01': { code: ErrorCodes.DB_AUTH_FAILED, message: 'The database rejected the configured credentials. Check DATABASE_URL.' },
+  '3D000': { code: ErrorCodes.DB_UNREACHABLE, message: 'The database named in DATABASE_URL does not exist.' },
+  '42501': { code: ErrorCodes.DB_PERMISSION_DENIED, message: 'The database role lacks the privileges this application needs.' },
+  '42P01': { code: ErrorCodes.DB_SCHEMA_MISSING, message: 'A table this application needs does not exist. Run supabase.sql (or `prisma migrate deploy`) against the database in DATABASE_URL.' },
+  '42703': { code: ErrorCodes.DB_SCHEMA_MISSING, message: 'A column this application needs does not exist. Run supabase.sql (or `prisma migrate deploy`) against the database in DATABASE_URL.' },
+  // Node network layer
+  ENOTFOUND: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database host in DATABASE_URL could not be resolved.' },
+  EAI_AGAIN: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database host in DATABASE_URL could not be resolved.' },
+  ECONNREFUSED: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database refused the connection. Check the host and port in DATABASE_URL.' },
+  ETIMEDOUT: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database connection timed out. Check DATABASE_URL.' },
+  EHOSTUNREACH: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database host is unreachable.' },
+  SELF_SIGNED_CERT_IN_CHAIN: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database TLS certificate could not be verified. Append ?sslmode=no-verify to DATABASE_URL for Supabase\'s pooler.' },
+  UNABLE_TO_VERIFY_LEAF_SIGNATURE: { code: ErrorCodes.DB_UNREACHABLE, message: 'The database TLS certificate could not be verified. Append ?sslmode=no-verify to DATABASE_URL for Supabase\'s pooler.' },
+};
+
+/** Structural match — no import from lib/db.ts, so no cycle can form. */
+function dbFailure(e: unknown): { code: string; message: string } | undefined {
+  if (typeof e !== 'object' || e === null) return undefined;
+  const { code } = e as { code?: unknown };
+  if (typeof code !== 'string') return undefined;
+  return DB_FAILURES[code];
+}
+
 // ─── Response helpers ───────────────────────────────────────────────────────
 
 export function ok<T>(data: T, status = 200, headers?: HeadersInit): NextResponse {
@@ -205,6 +269,14 @@ export function toErrorResponse(e: unknown): NextResponse {
           : 'That value is already taken',
       409,
     );
+  }
+  // A deployment that cannot use its database is not a bug in the handler:
+  // answer 503 with a code and a sentence an operator can act on. Placed after
+  // the unique-violation branch so P2002 keeps its 409.
+  const db = dbFailure(e);
+  if (db) {
+    console.error('[api] database failure', e);
+    return err(db.code, db.message, 503);
   }
   // Never leak internals.
   console.error('[api] unhandled error', e);

@@ -16,6 +16,7 @@
     "supabase:sql": "node scripts/build-supabase-sql.mjs",
     "supabase:sql:check": "node scripts/build-supabase-sql.mjs --check",
     "supabase:verify": "node scripts/verify-supabase-sql.mjs",
+    "db:check": "node scripts/check-db-url.mjs",
     "realtime:smoke": "node scripts/socket-smoke.mjs",
     "test": "vitest run",
     "postinstall": "prisma generate"

@@ -7,11 +7,20 @@
  *
  * Response shape:
  *   { status: "ok" | "degraded", version, uptime, startedAt,
- *     db: { ok: boolean, latencyMs?: number, error?: string } }
+ *     db: { ok: boolean, latencyMs?: number, error?: string,
+ *           schema?: { ok: boolean, error?: string } } }
  *
- * HTTP 200 when the app is up; 503 when the database is unreachable.
- * Never leaks secrets — the DB error is reduced to a short message with no
- * connection string, credentials, or stack trace.
+ * HTTP 200 when the app is up; 503 when the database is unusable.
+ * Never leaks secrets — driver errors are reduced to a short message with the
+ * credentials redacted and no stack trace.
+ *
+ * WHY TWO PROBES. `SELECT 1` only proves a socket opened. A database where the
+ * migrations were never applied answers `SELECT 1` happily and then fails every
+ * real query, so a connectivity-only check reports a healthy service while the
+ * whole app is down — which is exactly how a deployment can 500 on every write
+ * while `/api/health` stays green. The second probe therefore reads a real
+ * table (`LIMIT 0`, so it costs nothing and returns no rows) and the check is
+ * only "ok" when both succeed.
  */
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
@@ -28,6 +37,18 @@ interface DbCheck {
   ok: boolean;
   latencyMs?: number;
   error?: string;
+  schema?: { ok: boolean; error?: string };
+}
+
+/**
+ * Reduce a driver error to something safe to publish. Prisma and pg messages
+ * name the host and the missing table — useful, and not secret — but a
+ * connection URL that found its way into a message would carry the password,
+ * so credentials are redacted defensively.
+ */
+function describe(err: unknown): string {
+  const message = err instanceof Error ? err.message : "database unreachable";
+  return message.replace(/:\/\/[^@\s/]+@/g, "://<credentials>@").slice(0, 200);
 }
 
 async function checkDb(): Promise<DbCheck> {
@@ -35,12 +56,17 @@ async function checkDb(): Promise<DbCheck> {
   try {
     // Cheap round-trip; no tables touched.
     await prisma.$queryRaw`SELECT 1`;
-    return { ok: true, latencyMs: Date.now() - t0 };
   } catch (err) {
-    // Strip anything that could carry connection details.
-    const message =
-      err instanceof Error ? err.message : "database unreachable";
-    return { ok: false, error: message.slice(0, 200) };
+    return { ok: false, error: describe(err) };
+  }
+  const latencyMs = Date.now() - t0;
+
+  try {
+    // Proves the schema is present, not just that the socket opened.
+    await prisma.$queryRaw`SELECT 1 FROM "User" LIMIT 0`;
+    return { ok: true, latencyMs, schema: { ok: true } };
+  } catch (err) {
+    return { ok: false, latencyMs, schema: { ok: false, error: describe(err) } };
   }
 }
 
