@@ -8,7 +8,7 @@
  * Response shape:
  *   { status: "ok" | "degraded", version, uptime, startedAt,
  *     db: { ok: boolean, latencyMs?: number, error?: string,
- *           schema?: { ok: boolean, error?: string } } }
+ *           schema?: { ok: boolean, tableCount?: number, error?: string } } }
  *
  * HTTP 200 when the app is up; 503 when the database is unusable.
  * Never leaks secrets — driver errors are reduced to a short message with the
@@ -37,7 +37,7 @@ interface DbCheck {
   ok: boolean;
   latencyMs?: number;
   error?: string;
-  schema?: { ok: boolean; error?: string };
+  schema?: { ok: boolean; tableCount?: number; error?: string };
 }
 
 /**
@@ -61,12 +61,28 @@ async function checkDb(): Promise<DbCheck> {
   }
   const latencyMs = Date.now() - t0;
 
+  // How many tables this connection can actually see in `public`. Zero means
+  // the string points at a different database than the one the migrations were
+  // applied to — the distinction between "wrong database" and "wrong schema"
+  // that a bare error message cannot make.
+  let tableCount: number | undefined;
   try {
-    // Proves the schema is present, not just that the socket opened.
-    await prisma.$queryRaw`SELECT 1 FROM "User" LIMIT 0`;
-    return { ok: true, latencyMs, schema: { ok: true } };
+    const rows = await prisma.$queryRaw<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = 'public'
+    `;
+    tableCount = rows[0]?.n;
+  } catch {
+    // A failed count is not itself a failure; the probe below is the verdict.
+  }
+
+  try {
+    // Schema-qualified on purpose: Prisma qualifies the tables it queries, so
+    // an unqualified probe could succeed or fail purely on the connection's
+    // search_path and report a problem that the application does not have.
+    await prisma.$queryRaw`SELECT 1 FROM "public"."User" LIMIT 0`;
+    return { ok: true, latencyMs, schema: { ok: true, tableCount } };
   } catch (err) {
-    return { ok: false, latencyMs, schema: { ok: false, error: describe(err) } };
+    return { ok: false, latencyMs, schema: { ok: false, tableCount, error: describe(err) } };
   }
 }
 
