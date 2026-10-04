@@ -78,7 +78,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // tsx does not read `.env` on its own — the dev server does, and the other
 // scripts in here (dbstat.mjs, reset-single-admin.ts) load it the same way.
-// Without this, importing `lib/db` throws "DATABASE_URL is not set".
+// Without this, the first Prisma query throws "The database is not configured"
+// (lib/db builds its client lazily, so merely importing it is harmless now).
 const envPath = join(process.cwd(), ".env");
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, "utf8").split("\n")) {

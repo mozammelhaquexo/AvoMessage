@@ -33,15 +33,36 @@ const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
 };
 
+/**
+ * Thrown when the database is not configured.
+ *
+ * It carries the `{ status, code, message }` shape `lib/api.ts` recognises
+ * structurally (see `isCodedError`), so a misconfigured deployment answers
+ * **503 `DB_NOT_CONFIGURED`** with the reason instead of the opaque
+ * "Internal server error" an operator has no way to act on. Nothing sensitive
+ * is exposed — it says the database is unreachable, not how to reach it.
+ *
+ * Declared here rather than imported from `lib/api.ts` so that `lib/db.ts` keeps
+ * zero application imports and no cycle can form.
+ */
+export class DatabaseNotConfiguredError extends Error {
+  readonly status = 503;
+  readonly code = 'DB_NOT_CONFIGURED';
+  constructor(message: string) {
+    super(message);
+    this.name = 'DatabaseNotConfiguredError';
+  }
+}
+
 function createClient(): PrismaClient {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
-    throw new Error(
-      'DATABASE_URL is not set. Add a Postgres connection string to the ' +
-        'environment: locally in .env (see .env.example; `node scripts/dev-db.mjs` ' +
-        'starts the embedded cluster), and on Vercel under Project Settings -> ' +
-        'Environment Variables. Use the Supabase *pooler* string for serverless ' +
-        'hosts, and run supabase.sql once so the schema exists.',
+    throw new DatabaseNotConfiguredError(
+      'The database is not configured. DATABASE_URL is not set. Add a Postgres ' +
+        'connection string to the environment: locally in .env (see .env.example; ' +
+        '`node scripts/dev-db.mjs` starts the embedded cluster), and on Vercel under ' +
+        'Project Settings -> Environment Variables. Use the Supabase *pooler* string ' +
+        'for serverless hosts, and run supabase.sql once so the schema exists.',
     );
   }
   const adapter = new PrismaPg({ connectionString });
