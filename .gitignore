@@ -46,3 +46,10 @@ uploads/
 
 # compiled custom-server output (rebuilt via `npm run build:server`)
 /dist-server/
+
+# embedded Postgres cluster (local dev database — 60MB+ of binaries that change
+# on every write; never belongs in git or in a deploy)
+/.embedded-pg/
+
+# local archive of removed source files
+/.trash/
