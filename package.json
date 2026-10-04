@@ -6,6 +6,7 @@
     "dev": "tsx server.ts",
     "dev:next": "next dev",
     "build": "next build",
+    "vercel-build": "node scripts/apply-schema.mjs && next build",
     "build:server": "tsc -p tsconfig.server.json",
     "prestart": "node -e \"if(!require('fs').existsSync('.next/BUILD_ID')){console.error('No .next build found - run npm run build first.');process.exit(1)}\"",
     "start": "NODE_ENV=production tsx server.ts",
