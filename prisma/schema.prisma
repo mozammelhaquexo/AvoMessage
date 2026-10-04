@@ -1,0 +1,860 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// AvoMessage — Prisma schema (Phase 0–1, Architecture)
+// Provider: PostgreSQL. Written by the Product Architect agent.
+// DO NOT run `prisma migrate` here — migrations are the DB agent's job.
+// Conventions:
+//   • All tables have `id` (cuid string), `createdAt`, and `updatedAt` where mutation
+//     is possible. Soft delete via `deletedAt` where user content can be removed.
+//   • Join tables use composite @@id or @@unique pairs — no surrogate ids.
+//   • Denormalized counters (likeCount, commentCount, memberCount) are maintained
+//     transactionally in service code; feeds never COUNT(*) at read time.
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // NOTE (Prisma 7): connection URL lives in prisma.config.ts (`datasource.url`).
+}
+
+// ════════════════════════════ ENUMS ═══════════════════════════════════════════
+
+enum PlatformRole {
+  SUPER_ADMIN
+  ADMIN
+  USER
+}
+
+enum CompanyRole {
+  OWNER
+  MANAGER
+  MEMBER
+}
+
+enum TeamRole {
+  MANAGER
+  MEMBER
+}
+
+enum PostVisibility {
+  PUBLIC    // anyone, incl. logged-out where allowed
+  FOLLOWERS // author followers (+ author)
+  COMPANY   // members of post.companyId
+  PRIVATE   // author only
+}
+
+enum ConversationType {
+  DM
+  GROUP
+}
+
+enum ConversationRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  FILE
+  VOICE
+  SYSTEM // join/leave notices, call summaries
+}
+
+enum AttachmentKind {
+  IMAGE
+  VIDEO
+  FILE
+  VOICE
+}
+
+enum CallType {
+  AUDIO
+  VIDEO
+}
+
+enum CallStatus {
+  INITIATED // record created, not yet ringing
+  RINGING
+  ONGOING
+  ENDED
+  MISSED
+  DECLINED
+  FAILED
+}
+
+enum PresenceStatus {
+  ONLINE
+  AWAY
+  DO_NOT_DISTURB
+  OFFLINE
+}
+
+enum NotificationType {
+  LIKE
+  COMMENT
+  FOLLOW
+  MENTION
+  MESSAGE
+  CALL_MISSED
+  INVITATION_RECEIVED
+  INVITATION_ACCEPTED
+  COMPANY_ROLE_CHANGED
+  TEAM_ADDED
+  REPORT_STATUS
+  SYSTEM
+  MANAGER_APPLICATION // a new manager application, delivered to platform admins
+  MANAGER_APPLICATION_DECISION // the outcome of an application, delivered to the applicant
+}
+
+enum ReportTarget {
+  POST
+  COMMENT
+  MESSAGE
+  USER
+}
+
+enum ReportReason {
+  SPAM
+  HARASSMENT
+  HATE_SPEECH
+  NUDITY_OR_SEXUAL
+  VIOLENCE
+  MISINFORMATION
+  COPYRIGHT
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  IN_REVIEW
+  ACTIONED
+  DISMISSED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum JoinRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+/**
+ * Lifecycle of a request to become a company manager.
+ *
+ * PENDING -> APPROVED | DECLINED (by an admin), or WITHDRAWN (by the applicant).
+ * APPROVED is terminal: the admin review transaction also creates the
+ * CompanyMember row, which is what makes the Manager Panel appear.
+ */
+enum ManagerApplicationStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  WITHDRAWN
+}
+
+enum TokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+/// What an OTP challenge is a gate for. Every account-creating path in the app
+/// is one of these three — there is no way to create a user without proving
+/// control of the address first.
+enum OtpPurpose {
+  SIGNUP
+  COMPANY_MEMBER
+  COMPANY_MANAGER
+}
+
+// ════════════════════════════ USERS & AUTH ═══════════════════════════════════
+
+model User {
+  id             String        @id @default(cuid())
+  email          String        @unique
+  emailVerifiedAt DateTime?
+  passwordHash   String // bcrypt, cost 12
+  name           String
+  username       String        @unique
+  avatarUrl      String?
+  coverUrl       String?
+  bio            String?       @db.VarChar(280)
+  website        String?
+  location       String?
+  isPrivate      Boolean       @default(false)
+  isActive       Boolean       @default(true) // false = suspended by admin
+  isVerified     Boolean       @default(false) // platform "verified" badge
+  platformRole   PlatformRole  @default(USER)
+  deletedAt      DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // relations
+  sessions            Session[]
+  verificationTokens  VerificationToken[]
+  loginActivities     LoginActivity[]
+  presence            UserPresence?
+  posts               Post[]
+  comments            Comment[]
+  commentLikes        CommentLike[]
+  likes               Like[]
+  bookmarks           Bookmark[]
+  followers           Follow[]           @relation("following") // people who follow me
+  following           Follow[]           @relation("follower")  // people I follow
+  blocksInitiated     Block[]            @relation("blocker")
+  blocksReceived      Block[]            @relation("blocked")
+  mutesInitiated      Mute[]             @relation("muter")
+  mutesReceived       Mute[]             @relation("muted")
+  conversationMembers ConversationMember[]
+  sentMessages        Message[]          @relation("sender")
+  messageReactions    MessageReaction[]
+  voiceMessages       VoiceMessage[]     @relation("voiceSender")
+  initiatedCalls      Call[]             @relation("callInitiator")
+  callParticipations  CallParticipant[]
+  notifications       Notification[]     @relation("notified")
+  triggeredNotifications Notification[] @relation("actor")
+  notificationPreference NotificationPreference?
+  reportsFiled        Report[]           @relation("reporter")
+  reportsReviewed     Report[]           @relation("reviewer")
+  ownedCompanies      Company[]          @relation("companyOwner")
+  companyMemberships  CompanyMember[]
+  joinRequests        CompanyJoinRequest[]
+  reviewedJoinRequests CompanyJoinRequest[] @relation("joinRequestReviewer")
+  teamMemberships     TeamMember[]
+  invitationsSent     Invitation[]       @relation("invitedBy")
+  auditLogs           AuditLog[]
+  mentionsReceived    Mention[]
+  managerApplications ManagerApplication[] @relation("managerApplicant")
+  reviewedManagerApplications ManagerApplication[] @relation("managerApplicationReviewer")
+
+  @@index([username])
+  @@index([isActive])
+  @@index([createdAt])
+}
+
+model Session {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique // SHA-256 of the raw session token (cookie holds raw token)
+  ipAddress   String?
+  userAgent   String?
+  lastActiveAt DateTime @default(now())
+  expiresAt   DateTime  // sliding window, refreshed on activity
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model VerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique // SHA-256 of raw token emailed to user
+  type      TokenType
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, type])
+}
+
+/// A pending account-creating action, waiting on a 6-digit code sent to `email`.
+///
+/// Deliberately NOT a `VerificationToken`: that model has a required `userId`,
+/// and for signup the user does not exist yet — proving the address is exactly
+/// what brings them into being.
+///
+/// `payload` holds the WHOLE pending action (including the bcrypt password
+/// hash) server-side, so the verify step never has to trust a client-supplied
+/// email, company or password. A client that asks for a code for its own
+/// address cannot then redeem it for somebody else's account.
+model OtpChallenge {
+  id          String     @id @default(cuid())
+  purpose     OtpPurpose
+  email       String // lower-cased; the address the code was sent to
+  /// HMAC-SHA256(OTP_SECRET, `${id}:${code}`). A plain hash of a 6-digit space
+  /// is reversible from a database dump in milliseconds; the pepper is what
+  /// stops that, and keying on the id stops cross-challenge replay.
+  codeHash    String
+  payload     Json
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(5)
+  expiresAt   DateTime
+  verifiedAt  DateTime?
+  consumedAt  DateTime?
+  /// Who initiated it — null for self-signup, a manager or admin otherwise.
+  /// Authorization is re-checked against this at verify time.
+  createdById String?
+  createdAt   DateTime   @default(now())
+
+  @@index([email, purpose, createdAt])
+  @@index([expiresAt])
+}
+
+model LoginActivity {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email     String?  // recorded even when the account doesn't exist
+  ipAddress String?
+  userAgent String?
+  success   Boolean
+  reason    String?  // e.g. "bad_password", "unverified_email", "account_suspended"
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([ipAddress, createdAt])
+}
+
+model UserPresence {
+  userId    String         @id
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    PresenceStatus @default(OFFLINE)
+  lastSeenAt DateTime     @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+// ════════════════════════════ SOCIAL GRAPH ═══════════════════════════════════
+
+model Follow {
+  followerId  String
+  followingId String
+  follower    User   @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User   @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@id([followerId, followingId])
+  @@index([followingId])
+}
+
+model Block {
+  blockerId String
+  blockedId String
+  blocker   User   @relation("blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User   @relation("blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([blockerId, blockedId])
+}
+
+model Mute {
+  muterId String
+  mutedId String
+  muter   User   @relation("muter", fields: [muterId], references: [id], onDelete: Cascade)
+  muted   User   @relation("muted", fields: [mutedId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([muterId, mutedId])
+}
+
+// ════════════════════════════ POSTS & FEED ═══════════════════════════════════
+
+model Post {
+  id          String         @id @default(cuid())
+  authorId    String
+  author      User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body        String         @db.VarChar(2000)
+  visibility  PostVisibility @default(PUBLIC)
+  companyId   String? // set for company-scoped posts (visibility = COMPANY)
+  company     Company?       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  likeCount     Int @default(0)
+  commentCount  Int @default(0)
+  shareCount    Int @default(0)
+  deletedAt   DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  media     PostMedia[]
+  comments  Comment[]
+  likes     Like[]
+  bookmarks Bookmark[]
+  hashtags  PostHashtag[]
+  mentions  Mention[]
+
+  @@index([authorId, createdAt])
+  @@index([companyId, createdAt])
+  @@index([visibility, createdAt])
+  @@index([createdAt])
+}
+
+model PostMedia {
+  id        String  @id @default(cuid())
+  postId    String
+  post      Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  url       String
+  kind      AttachmentKind
+  mimeType  String?
+  width     Int?
+  height    Int?
+  sizeBytes Int?
+  sortOrder Int     @default(0)
+
+  @@index([postId, sortOrder])
+}
+
+model Comment {
+  id        String    @id @default(cuid())
+  postId    String
+  post      Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body      String    @db.VarChar(1000)
+  parentId  String? // threaded replies (one level deep in v1 UI)
+  parent    Comment?  @relation("replies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("replies")
+  likeCount Int       @default(0) // denormalized; maintained transactionally in service code
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  likes    CommentLike[]
+  mentions Mention[]
+
+  @@index([postId, createdAt])
+}
+
+model CommentLike {
+  userId    String
+  commentId String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, commentId])
+  @@index([commentId])
+}
+
+model Like {
+  userId    String
+  postId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, postId])
+  @@index([postId])
+}
+
+model Bookmark {
+  userId    String
+  postId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, postId])
+  @@index([userId, createdAt])
+}
+
+model Hashtag {
+  id         String @id @default(cuid())
+  tag        String @unique // lowercase, no '#'
+  usageCount Int    @default(0)
+
+  posts PostHashtag[]
+
+  @@index([usageCount(sort: Desc)])
+}
+
+model PostHashtag {
+  postId    String
+  hashtagId String
+  post      Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  hashtag   Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, hashtagId])
+  @@index([hashtagId])
+}
+
+model Mention {
+  id              String   @id @default(cuid())
+  postId          String?
+  post            Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  commentId       String?
+  comment         Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  mentionedUserId String
+  mentionedUser   User     @relation(fields: [mentionedUserId], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now())
+
+  @@index([mentionedUserId, createdAt])
+}
+
+// ════════════════════════════ MESSAGING ══════════════════════════════════════
+
+model Conversation {
+  id           String           @id @default(cuid())
+  type         ConversationType @default(DM)
+  title        String? // group name; null for DMs
+  avatarUrl    String?
+  createdById  String?
+  companyId    String? // optional: team/company group chat
+  company      Company?         @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  lastMessageAt DateTime        @default(now())
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  members  ConversationMember[]
+  messages Message[]
+  calls    Call[]
+
+  @@index([companyId])
+  @@index([lastMessageAt(sort: Desc)])
+}
+
+model ConversationMember {
+  conversationId String
+  userId         String
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           ConversationRole @default(MEMBER)
+  lastReadAt     DateTime         @default(now())
+  isMuted        Boolean          @default(false)
+  joinedAt       DateTime         @default(now())
+
+  @@id([conversationId, userId])
+  @@index([userId, conversationId])
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String?
+  sender         User?        @relation("sender", fields: [senderId], references: [id], onDelete: SetNull)
+  body           String?      @db.VarChar(4000)
+  type           MessageType  @default(TEXT)
+  clientId       String? // idempotency key for socket `message:send` retries (ARCHITECTURE §3.2)
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime     @default(now())
+
+  /**
+   * Quoted parent. Self-relation with `SetNull` so hard-deleting a parent
+   * (rare — the app soft-deletes) degrades to "no quote" rather than
+   * cascading away the reply. Must be in the same conversation; enforced in
+   * `sendMessage`.
+   */
+  replyToId String?
+  replyTo   Message?  @relation("messageReply", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   Message[] @relation("messageReply")
+
+  /**
+   * Forward provenance: set when this message is a forward of another one.
+   * Points across conversations, which is the whole point of forwarding, so it
+   * is intentionally NOT constrained to the same conversation.
+   */
+  forwardedFromId String?
+  forwardedFrom   Message?  @relation("messageForward", fields: [forwardedFromId], references: [id], onDelete: SetNull)
+  forwardedTo     Message[] @relation("messageForward")
+
+  attachments Attachment[]
+  reactions   MessageReaction[]
+  voice       VoiceMessage?
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@index([replyToId])
+  @@unique([conversationId, clientId]) // nullable clientId: Postgres treats NULLs as distinct
+}
+
+/**
+ * A request to become a company manager, reviewed by a platform admin.
+ *
+ * `companyId` is optional: an applicant may name a company that is not on the
+ * platform yet, in which case `companyName` carries the free text and the
+ * reviewing admin picks or creates the company at approval time.
+ */
+model ManagerApplication {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation("managerApplicant", fields: [userId], references: [id], onDelete: Cascade)
+  companyId   String?
+  company     Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  companyName String    @db.VarChar(120)
+  position    String    @db.VarChar(120)
+  companySize Int       @default(0) // total headcount at the company
+  teamCount   Int       @default(0) // how many teams the applicant would run
+  teamSize    Int       @default(0) // people per team
+  message     String?   @db.VarChar(1000)
+  status      ManagerApplicationStatus @default(PENDING)
+  reviewedById String?
+  reviewedBy   User?    @relation("managerApplicationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewNote  String?   @db.VarChar(500)
+  reviewedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([userId, status])
+  @@index([companyId])
+  // "One PENDING application per user" is enforced in the service, not by a
+  // constraint: a partial unique index would need raw SQL, and the service has
+  // to read the existing row anyway to return a useful error.
+}
+
+model MessageReaction {
+  messageId String
+  userId    String
+  emoji     String // single emoji, validated server-side
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([messageId, userId, emoji])
+}
+
+model Attachment {
+  id          String         @id @default(cuid())
+  messageId   String
+  message     Message        @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  kind        AttachmentKind
+  url         String
+  name        String?
+  mimeType    String?
+  sizeBytes   Int?
+  width       Int?
+  height      Int?
+  createdAt   DateTime       @default(now())
+
+  @@index([messageId])
+}
+
+model VoiceMessage {
+  id            String   @id @default(cuid())
+  messageId     String   @unique
+  message       Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  senderId      String
+  sender        User     @relation("voiceSender", fields: [senderId], references: [id], onDelete: Cascade)
+  url           String
+  durationSeconds Int
+  waveform      Json? // normalized amplitude array for the player UI
+  mimeType      String?
+  sizeBytes     Int?
+  createdAt     DateTime @default(now())
+}
+
+// ════════════════════════════ CALLS ══════════════════════════════════════════
+
+model Call {
+  id             String      @id @default(cuid())
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  initiatorId    String
+  initiator      User        @relation("callInitiator", fields: [initiatorId], references: [id], onDelete: Cascade)
+  type           CallType
+  status         CallStatus  @default(INITIATED)
+  startedAt      DateTime    @default(now())
+  endedAt        DateTime?
+
+  participants CallParticipant[]
+
+  @@index([initiatorId, startedAt(sort: Desc)])
+  @@index([conversationId])
+}
+
+model CallParticipant {
+  callId   String
+  userId   String
+  call     Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt DateTime @default(now())
+  leftAt   DateTime?
+
+  @@id([callId, userId])
+}
+
+// ════════════════════════════ NOTIFICATIONS ══════════════════════════════════
+
+model Notification {
+  id         String           @id @default(cuid())
+  userId     String // recipient
+  recipient  User             @relation("notified", fields: [userId], references: [id], onDelete: Cascade)
+  actorId    String?
+  actor      User?            @relation("actor", fields: [actorId], references: [id], onDelete: SetNull)
+  type       NotificationType
+  entityType String? // "post" | "comment" | "message" | "conversation" | "company" | "team" | "user"
+  entityId   String?
+  title      String?
+  body       String?
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+}
+
+// Added by Backend Engineer A (Agent 04a): per-user notification preferences.
+// DB agent: include in the next migration.
+model NotificationPreference {
+  userId        String   @id
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes         Boolean  @default(true)
+  comments      Boolean  @default(true)
+  follows       Boolean  @default(true)
+  mentions      Boolean  @default(true)
+  messages      Boolean  @default(true)
+  invitations   Boolean  @default(true)
+  announcements Boolean  @default(true)
+  calls         Boolean  @default(true)
+  security      Boolean  @default(true)
+  updatedAt     DateTime @updatedAt
+}
+
+// ════════════════════════════ COMPANIES & TEAMS ══════════════════════════════
+
+model Company {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  logoUrl     String?
+  coverUrl    String?
+  brandColor  String?  @db.VarChar(7) // hex color e.g. #84cc16
+  description String?  @db.VarChar(1000)
+  website     String?
+  ownerId     String
+  owner       User     @relation("companyOwner", fields: [ownerId], references: [id])
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members       CompanyMember[]
+  teams         Team[]
+  posts         Post[]
+  conversations Conversation[]
+  invitations   Invitation[]
+  joinRequests  CompanyJoinRequest[]
+  managerApplications ManagerApplication[]
+
+  @@index([slug])
+}
+
+model CompanyMember {
+  companyId String
+  userId    String
+  company   Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      CompanyRole @default(MEMBER)
+  joinedAt  DateTime    @default(now())
+
+  @@id([companyId, userId])
+  @@index([userId])
+}
+
+model Team {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name        String
+  description String?  @db.VarChar(500)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members     TeamMember[]
+  invitations Invitation[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model TeamMember {
+  teamId   String
+  userId   String
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     TeamRole @default(MEMBER)
+  joinedAt DateTime @default(now())
+
+  @@id([teamId, userId])
+  @@index([userId])
+}
+
+model Invitation {
+  id         String           @id @default(cuid())
+  companyId  String
+  company    Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  teamId     String?
+  team       Team?            @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  email      String
+  role       CompanyRole      @default(MEMBER)
+  tokenHash  String           @unique // SHA-256 of raw token in the invite link
+  invitedById String
+  invitedBy  User             @relation("invitedBy", fields: [invitedById], references: [id])
+  status     InvitationStatus @default(PENDING)
+  expiresAt  DateTime
+  createdAt  DateTime         @default(now())
+
+  @@index([companyId, status])
+  @@index([email, status])
+}
+
+model CompanyJoinRequest {
+  id        String              @id @default(cuid())
+  companyId String
+  company   Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message   String?             @db.VarChar(500)
+  status    JoinRequestStatus   @default(PENDING)
+  reviewedById String?
+  reviewedBy   User?             @relation("joinRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@unique([companyId, userId])
+  @@index([companyId, status])
+}
+
+// ════════════════════════════ MODERATION & ADMIN ═════════════════════════════
+
+model Report {
+  id         String       @id @default(cuid())
+  reporterId String
+  reporter   User         @relation("reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetType ReportTarget
+  targetId   String
+  reason     ReportReason
+  details    String?      @db.VarChar(1000)
+  status     ReportStatus @default(PENDING)
+  reviewerId String?
+  reviewer   User?        @relation("reviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewedAt DateTime?
+  createdAt  DateTime     @default(now())
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action    String   // e.g. "user.suspend", "company.role_change", "settings.update"
+  entityType String?
+  entityId  String?
+  metadata  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+model SystemSetting {
+  key       String   @id // e.g. "registration.enabled", "uploads.max_mb"
+  value     Json
+  updatedById String?
+  updatedAt DateTime @updatedAt
+}

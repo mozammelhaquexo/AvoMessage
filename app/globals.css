@@ -1,0 +1,826 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   AvoMessage — Design Tokens (Phase 2)
+   Source of truth: docs/DESIGN_TOKENS.md
+   --------------------------------------------------------------------------
+   Architecture:
+   1. Raw semantic tokens live as CSS custom properties on `:root` (light)
+      and are overridden under `.dark` (dark). Components NEVER hardcode
+      colors/spacing — they consume these tokens via the Tailwind theme
+      mapping below or `var(--token)` in custom CSS.
+   2. `@theme inline` maps raw tokens to Tailwind utilities so they respond
+      to the `.dark` class at runtime (e.g. `bg-canvas`, `text-ink`).
+   3. `@theme` (static) holds theme-invariant tokens: radius, motion,
+      z-index, breakpoints, type scale (emitted to `:root` once).
+
+   Utility-name mapping (documented deviation from raw token names, chosen
+   to avoid Tailwind namespace collisions such as `text-base`):
+     --bg-base      -> bg-canvas
+     --bg-surface-1 -> bg-surface        --bg-surface-2 -> bg-surface-2
+     --text-1       -> text-ink          --text-2 -> text-ink-2  --text-3 -> text-ink-3
+     --line         -> border-line       --line-strong -> border-line-strong
+     --elev-* (raw shadow tokens) -> shadow-sm/md/lg/pop
+     --dur-*        -> duration-instant/fast/base/slow  (via --transition-duration-*)
+     --ease-*       -> ease-out / ease-in-out (overrides)
+     --z-*          -> z-sticky/dropdown/drawer/modal/toast/call/tooltip (via --z-index-*)
+     --on-brand     -> text-on-brand (dark ink on brand fills; pairs with bg-brand-cta)
+     --success/warning/danger/info-strong -> text-*-strong (AA-safe status text)
+   Everything else maps 1:1 (brand, accent, success, warning, danger, info,
+   online, away, dnd, offline, bubble-own, bubble-their, overlay).
+   ========================================================================== */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* --------------------------------------------------------------------------
+   1. Raw semantic tokens — LIGHT (default)
+   -------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+
+  /* Brand — avocado → lime (vibrant, premium) */
+  --brand: #65a30d; /* lime-600 — primary actions, links */
+  --brand-strong: #3f6212; /* lime-800 — primary text on light, more punch */
+  --brand-soft: #f7fee7; /* lime-50 — lighter, premium tinted backgrounds */
+  --brand-softer: #fafdf2; /* near-white lime tint — soft surfaces */
+  --brand-glow: 0 0 0 rgb(0 0 0 / 0); /* no glow in light mode */
+  --brand-vivid: #84cc16; /* lime-500 — fixed; CTA gradient stop */
+  --on-brand: #17210c; /* fixed dark ink for text on brand fills */
+  --brand-cta-from: #65a30d; /* fixed; AA-safe CTA gradient start */
+
+  /* Accent — deep teal for company/enterprise surfaces */
+  --accent: #0d9488; /* teal-600 — punchier than teal-700 */
+  --accent-soft: #f0fdfa; /* teal-50 — lighter, premium */
+  --accent-softer: #f7fefd; /* near-white teal tint */
+
+  /* Surfaces & text — premium warm-paper aesthetic with more visible depth */
+  --bg-base: #f7f6f1; /* warm cream — distinct from pure white */
+  --bg-surface-1: #ffffff; /* cards, panels */
+  --bg-surface-2: #f1efe7; /* hover, inset areas, inputs — warmer */
+  --bg-overlay: rgb(20 26 14 / 0.55); /* modals, drawers — slightly darker */
+  --on-overlay: #ffffff; /* fixed light ink for text on --bg-overlay (dark scrim in both themes) */
+  --text-1: #1a2013; /* primary text */
+  --text-2: #4d5a3f; /* secondary text */
+  --text-3: #8a937c; /* muted / placeholder */
+  --line: #e0e3d3; /* borders, dividers — slightly more visible */
+  --line-strong: #c5cdb1; /* emphasized borders — warmer */
+
+  /* Status — fixed across themes */
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --info: #0284c7;
+
+  /* Status — strong text variants, AA-safe on light tints AND dark base.
+     Light: 700 shades · Dark: 400 shades. */
+  --success-strong: #15803d;
+  --warning-strong: #b45309;
+  --danger-strong: #b91c1c;
+  --info-strong: #0369a1;
+
+  /* Presence */
+  --online: #65a30d;
+  --away: #d97706;
+  --dnd: #dc2626;
+  --offline: #9ca3af;
+
+  /* Message bubbles — chat identity (more visible own-bubble) */
+  --bubble-own: #d9f99d; /* lime-200 */
+  --bubble-their: #ffffff;
+
+  /* Ambient canvas tint — used by body backdrop for premium feel */
+  --ambient-tint-1: #fef3c7; /* warm amber whisper */
+  --ambient-tint-2: #d9f99d; /* lime whisper */
+  --ambient-tint-3: #ccfbf1; /* teal whisper */
+
+  /* Elevation (theme-swapped; mapped to shadow-* utilities) */
+  --elev-sm: 0 1px 2px rgb(26 32 19 / 0.06), 0 1px 1px rgb(26 32 19 / 0.04);
+  --elev-md: 0 4px 12px rgb(26 32 19 / 0.08), 0 1px 2px rgb(26 32 19 / 0.04);
+  --elev-lg: 0 12px 32px rgb(26 32 19 / 0.12), 0 4px 8px rgb(26 32 19 / 0.06);
+  --elev-pop: 0 8px 24px rgb(101 163 13 / 0.30), 0 2px 6px rgb(101 163 13 / 0.18);
+}
+
+/* --------------------------------------------------------------------------
+   2. Raw semantic tokens — DARK (`.dark` on <html>)
+   -------------------------------------------------------------------------- */
+.dark {
+  color-scheme: dark;
+
+  --brand: #84cc16; /* lime-500 — fills on dark */
+  --brand-strong: #a3e635; /* lime-400 — primary text on dark */
+  --brand-soft: #1a2e05; /* lime-950 — tinted backgrounds */
+  --brand-softer: #0f1d03; /* deeper lime-tinted bg */
+  --brand-glow: 0 0 24px rgb(132 204 22 / 0.35); /* futuristic CTA glow */
+
+  --accent: #2dd4bf; /* teal-400 */
+  --accent-soft: #042f2e; /* teal-950 */
+  --accent-softer: #021c1c; /* deeper teal-tinted bg */
+
+  --bg-base: #0c0f0a; /* near-black, green-tinted */
+  --bg-surface-1: #131711; /* cards, panels */
+  --bg-surface-2: #1b211a; /* hover, inset areas, inputs */
+  --bg-overlay: rgb(0 0 0 / 0.7);
+  --on-overlay: #ffffff;
+  --text-1: #f2f5ea;
+  --text-2: #b9c4a8;
+  --text-3: #6e7860;
+  --line: #2a3126;
+  --line-strong: #3d4636;
+
+  /* Status & presence stay fixed across themes */
+
+  /* Status strong-text variants swap per theme for AA contrast */
+  --success-strong: #4ade80;
+  --warning-strong: #fbbf24;
+  --danger-strong: #f87171;
+  --info-strong: #38bdf8;
+
+  --bubble-own: #365314; /* lime-900 */
+  --bubble-their: #1b211a; /* surface-2 */
+
+  /* Ambient canvas tints — much darker in dark mode */
+  --ambient-tint-1: #1a1505; /* amber whisper, dark */
+  --ambient-tint-2: #1a2e05; /* lime whisper, dark */
+  --ambient-tint-3: #042f2e; /* teal whisper, dark */
+
+  --elev-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --elev-md: 0 4px 16px rgb(0 0 0 / 0.5), 0 1px 2px rgb(0 0 0 / 0.3);
+  --elev-lg: 0 12px 40px rgb(0 0 0 / 0.6), 0 4px 12px rgb(0 0 0 / 0.4);
+  --elev-pop: 0 0 24px rgb(132 204 22 / 0.35), 0 4px 12px rgb(132 204 22 / 0.18);
+}
+
+/* --------------------------------------------------------------------------
+   3. Tailwind v4 theme — theme-dependent tokens (respond to .dark)
+   -------------------------------------------------------------------------- */
+@theme inline {
+  /* Colors */
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-vivid: var(--brand-vivid);
+  --color-on-brand: var(--on-brand);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-canvas: var(--bg-base);
+  --color-surface: var(--bg-surface-1);
+  --color-surface-2: var(--bg-surface-2);
+  --color-overlay: var(--bg-overlay);
+  --color-on-overlay: var(--on-overlay);
+  --color-ink: var(--text-1);
+  --color-ink-2: var(--text-2);
+  --color-ink-3: var(--text-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-success-strong: var(--success-strong);
+  --color-warning-strong: var(--warning-strong);
+  --color-danger-strong: var(--danger-strong);
+  --color-info-strong: var(--info-strong);
+  --color-online: var(--online);
+  --color-away: var(--away);
+  --color-dnd: var(--dnd);
+  --color-offline: var(--offline);
+  --color-bubble-own: var(--bubble-own);
+  --color-bubble-their: var(--bubble-their);
+
+  /* Elevation */
+  --shadow-sm: var(--elev-sm);
+  --shadow-md: var(--elev-md);
+  --shadow-lg: var(--elev-lg);
+  --shadow-pop: var(--elev-pop);
+
+  /* Typography — next/font CSS variables resolve at runtime */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --font-display: var(--font-avo-display), var(--font-geist-sans), ui-sans-serif,
+    system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* --------------------------------------------------------------------------
+   4. Tailwind v4 theme — theme-invariant tokens
+   -------------------------------------------------------------------------- */
+@theme {
+  /* Radius */
+  --radius-sm: 6px; /* inputs, small chips */
+  --radius-md: 10px; /* buttons, cards */
+  --radius-lg: 16px; /* panels, modals */
+  --radius-xl: 24px; /* sheets, hero cards */
+
+  /* Motion — durations */
+  --transition-duration-instant: 80ms; /* press states */
+  --transition-duration-fast: 150ms; /* hovers, toggles */
+  --transition-duration-base: 250ms; /* drawers, toasts, message send */
+  --transition-duration-slow: 400ms; /* page transitions, modals */
+
+  /* Motion — easings (expressive, snappy entrances) */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Z-index layers */
+  --z-index-sticky: 20; /* sticky headers, sidebars, tab bars */
+  --z-index-dropdown: 30; /* menus, popovers, emoji picker */
+  --z-index-drawer: 40; /* side panels */
+  --z-index-modal: 50; /* dialogs, lightbox */
+  --z-index-toast: 60; /* toasts */
+  --z-index-call: 70; /* active call overlay (always top) */
+  --z-index-tooltip: 80; /* tooltips */
+
+  /* Breakpoints (match DESIGN_TOKENS.md; same as Tailwind defaults) */
+  --breakpoint-sm: 640px; /* large phones */
+  --breakpoint-md: 768px; /* tablets — sidebar collapses to rail */
+  --breakpoint-lg: 1024px; /* desktop — 3-column */
+  --breakpoint-xl: 1280px; /* wide — max content 1200px */
+  --breakpoint-2xl: 1536px; /* ultra-wide */
+
+  /* Type scale (major-third); body sizes use Tailwind defaults */
+  --text-display: 2.5rem; /* 40px — landing hero */
+  --text-display--line-height: 1.1;
+  --text-h1: 2rem; /* 32px — page titles */
+  --text-h1--line-height: 1.2;
+  --text-h2: 1.5rem; /* 24px — section titles */
+  --text-h2--line-height: 1.3;
+  --text-h3: 1.25rem; /* 20px — card titles */
+  --text-h3--line-height: 1.35;
+  --text-body-sm: 0.875rem; /* 14px — feed text, messages */
+  --text-body-sm--line-height: 1.45;
+  --text-caption: 0.75rem; /* 12px — meta, timestamps */
+  --text-caption--line-height: 1.4;
+  --text-tiny: 0.6875rem; /* 11px — badges, overlines */
+  --text-tiny--line-height: 1.3;
+}
+
+/* --------------------------------------------------------------------------
+   5. Base layer — app chrome (no margin/padding resets; preflight owns those)
+   -------------------------------------------------------------------------- */
+@layer base {
+  html {
+    @apply h-full antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    /* Premium canvas: solid base + soft ambient corner glows (theme-aware) */
+    background-color: var(--bg-base);
+    background-image:
+      radial-gradient(
+        1200px 600px at 100% -10%,
+        color-mix(in srgb, var(--ambient-tint-2) 28%, transparent),
+        transparent 60%
+      ),
+      radial-gradient(
+        1000px 500px at -10% 110%,
+        color-mix(in srgb, var(--ambient-tint-3) 24%, transparent),
+        transparent 60%
+      ),
+      radial-gradient(
+        700px 400px at 50% 50%,
+        color-mix(in srgb, var(--ambient-tint-1) 12%, transparent),
+        transparent 65%
+      );
+    background-attachment: fixed;
+    color: var(--text-1);
+    font-family: var(--font-sans);
+    transition:
+      background-color var(--transition-duration-base) var(--ease-out),
+      color var(--transition-duration-base) var(--ease-out);
+  }
+
+  ::selection {
+    background-color: var(--brand-soft);
+    color: var(--text-1);
+  }
+
+  /* Accessible focus baseline — components may override with their own ring */
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /*
+   * Interactive colour changes ease; they do not snap.
+   *
+   * Nearly every hover affordance in the app — table rows, list items, cards,
+   * ghost buttons — changes `background-color` on hover, and most declared no
+   * transition of their own. So a row's highlight appeared in a single frame
+   * while the `Button` sitting next to it faded in over `--dur-fast`. That
+   * mismatch is a large part of why the UI read as "rough" rather than smooth.
+   *
+   * This is a DEFAULT, not an override: `transition-*` utilities live in the
+   * utilities layer, which comes after `base`, so any component that wants a
+   * different transition still wins. `transform` is deliberately absent —
+   * framer-motion owns that through inline styles.
+   *
+   * Reduced-motion users are unaffected: the block in §7 forces
+   * `transition-duration: 0.01ms !important` over everything above.
+   */
+  a,
+  button,
+  [role="button"],
+  summary {
+    transition-property: color, background-color, border-color, box-shadow, opacity;
+    transition-duration: var(--transition-duration-fast);
+    transition-timing-function: var(--ease-out);
+  }
+
+  /* Scrollbars — thin, token-tinted */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--line-strong);
+    border-radius: 8px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--text-3);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   6. Custom utilities — glass, gradients, helpers
+   (defined with @utility so they compose with @apply and variants)
+   -------------------------------------------------------------------------- */
+
+/* Frosted-glass surfaces */
+@utility glass {
+  background-color: color-mix(in srgb, var(--bg-surface-1) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid var(--line);
+}
+@utility glass-strong {
+  background-color: color-mix(in srgb, var(--bg-surface-1) 88%, transparent);
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  border: 1px solid var(--line);
+}
+
+/* Brand gradients */
+@utility bg-brand-gradient {
+  background-image: linear-gradient(135deg, var(--brand-strong), var(--brand) 55%, var(--accent));
+  @variant dark {
+    background-image: linear-gradient(135deg, var(--brand), var(--brand-vivid) 50%, var(--accent));
+  }
+}
+/* AA-safe CTA gradient — use ONLY with `text-on-brand`.
+   Dark ink (#17210c) passes WCAG AA (5.4–8.4:1) on both stops, both themes.
+   White text does NOT pass on these stops — never pair with text-white. */
+@utility bg-brand-cta {
+  background-image: linear-gradient(135deg, var(--brand-cta-from), var(--brand-vivid));
+}
+@utility bg-brand-gradient-soft {
+  background-image: linear-gradient(135deg, var(--brand-soft), var(--accent-soft));
+}
+@utility text-brand-gradient {
+  background-image: linear-gradient(120deg, var(--brand-strong), var(--accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  @variant dark {
+    background-image: linear-gradient(120deg, var(--brand-strong), var(--brand));
+  }
+}
+
+/* Brand "hero" panel gradient — the deep, saturated panel behind white text on
+   the auth/marketing split layout. Every stop is mixed toward near-black so
+   white body text clears WCAG AA in BOTH themes (the plain bg-brand-gradient
+   is a fill for dark ink, not for white text). */
+@utility bg-brand-hero {
+  background-image: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--brand-vivid) 55%, #050b06) 0%,
+    color-mix(in srgb, var(--brand-vivid) 42%, #050b06) 55%,
+    color-mix(in srgb, var(--accent) 45%, #050b06) 100%
+  );
+}
+
+/* Primary CTA glow (dark-mode futuristic accent; harmless in light) */
+@utility glow-brand {
+  box-shadow: var(--brand-glow);
+}
+
+/* Hide scrollbars while keeping scrollability (carousels, tab rails) */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Premium chat-thread backdrop — soft brand-tinted radial washes over canvas.
+   Theme-aware via color-mix; subtle enough to keep bubble contrast. */
+@utility chat-thread-bg {
+  background:
+    radial-gradient(
+      1100px 480px at 88% -8%,
+      color-mix(in srgb, var(--brand-soft) 75%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      860px 420px at 8% 108%,
+      color-mix(in srgb, var(--accent-soft) 65%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      500px 400px at 50% 50%,
+      color-mix(in srgb, var(--ambient-tint-1) 14%, transparent),
+      transparent 65%
+    ),
+    var(--bg-base);
+}
+
+/* Shimmer sweep for skeleton loaders (more premium than a plain pulse). */
+@utility skeleton-shimmer {
+  background: linear-gradient(
+    100deg,
+    var(--line) 35%,
+    var(--bg-surface-2) 50%,
+    var(--line) 65%
+  );
+  background-size: 200% 100%;
+  animation: avo-shimmer 1.8s var(--ease-in-out) infinite;
+}
+
+@layer utilities {
+  /* Dim imagery slightly in dark mode for visual comfort */
+  .dark .img-dim {
+    filter: brightness(0.92);
+  }
+
+  /* Typing indicator dots pulse */
+  @keyframes avo-typing {
+    0%,
+    60%,
+    100% {
+      transform: translateY(0);
+      opacity: 0.4;
+    }
+    30% {
+      transform: translateY(-4px);
+      opacity: 1;
+    }
+  }
+  .typing-dot {
+    animation: avo-typing var(--transition-duration-slow) var(--ease-in-out) infinite;
+  }
+  .typing-dot:nth-child(2) {
+    animation-delay: 0.12s;
+  }
+  .typing-dot:nth-child(3) {
+    animation-delay: 0.24s;
+  }
+
+  /* Skeleton shimmer sweep */
+  @keyframes avo-shimmer {
+    0% {
+      background-position: 180% 0;
+    }
+    100% {
+      background-position: -80% 0;
+    }
+  }
+}
+
+/* --------------------------------------------------------------------------
+   7. Reduced motion — disable non-essential animation globally
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   8. User-selectable palettes (Settings → Appearance)
+   --------------------------------------------------------------------------
+   The provider writes three data attributes on <html>:
+     data-accent  — brand hue family    (avocado | emerald | ocean | violet | rose | amber | graphite)
+     data-surface — canvas/surface tone (light: warm | neutral | cool · dark: forest | graphite | midnight)
+     data-radius  — corner roundness    (sharp | default | round)
+
+   `avocado` / `warm` / `forest` / `default` are the shipped defaults and live
+   in :root + .dark above, so they deliberately have NO block here — leaving
+   the attribute off (or set to the default id) falls through to those.
+
+   Every non-default preset ships BOTH a light block and a `.dark[...]` block:
+   both selectors have equal specificity on <html>, so the light block would
+   otherwise beat `.dark` in dark mode. Every pair below was chosen to clear
+   WCAG AA for the role the token plays; --on-brand flips to dark ink in dark
+   mode because the dark brand fills are all 300/400 shades.
+   -------------------------------------------------------------------------- */
+
+
+/* ── Accent presets ─────────────────────────────────────────────────── */
+
+[data-accent="emerald"] {
+  --brand: #059669;
+  --brand-strong: #065f46;
+  --brand-soft: #ecfdf5;
+  --brand-softer: #f6fefb;
+  --brand-vivid: #10b981;
+  --brand-cta-from: #059669;
+  --on-brand: #17210c;
+  --accent: #0f766e;
+  --accent-soft: #f0fdfa;
+  --accent-softer: #f7fefd;
+  --bubble-own: #a7f3d0;
+  --brand-glow: 0 0 0 rgb(0 0 0 / 0);
+  --elev-pop: 0 8px 24px rgb(5 150 105 / 0.30), 0 2px 6px rgb(5 150 105 / 0.18);
+}
+
+.dark[data-accent="emerald"] {
+  --brand: #10b981;
+  --brand-strong: #6ee7b7;
+  --brand-soft: #022c22;
+  --brand-softer: #011712;
+  --brand-vivid: #34d399;
+  --brand-cta-from: #10b981;
+  --on-brand: #17210c;
+  --accent: #2dd4bf;
+  --accent-soft: #042f2e;
+  --accent-softer: #021c1c;
+  --bubble-own: #064e3b;
+  --brand-glow: 0 0 24px rgb(16 185 129 / 0.35);
+  --elev-pop: 0 0 24px rgb(16 185 129 / 0.35), 0 4px 12px rgb(16 185 129 / 0.18);
+}
+
+[data-accent="ocean"] {
+  --brand: #0369a1;
+  --brand-strong: #075985;
+  --brand-soft: #f0f9ff;
+  --brand-softer: #f7fbff;
+  --brand-vivid: #0369a1;
+  --brand-cta-from: #075985;
+  --on-brand: #ffffff;
+  --accent: #4338ca;
+  --accent-soft: #eef2ff;
+  --accent-softer: #f7f8ff;
+  --bubble-own: #bae6fd;
+  --brand-glow: 0 0 0 rgb(0 0 0 / 0);
+  --elev-pop: 0 8px 24px rgb(3 105 161 / 0.30), 0 2px 6px rgb(3 105 161 / 0.18);
+}
+
+.dark[data-accent="ocean"] {
+  --brand: #38bdf8;
+  --brand-strong: #7dd3fc;
+  --brand-soft: #082f49;
+  --brand-softer: #041c2b;
+  --brand-vivid: #7dd3fc;
+  --brand-cta-from: #38bdf8;
+  --on-brand: #17210c;
+  --accent: #818cf8;
+  --accent-soft: #1e1b4b;
+  --accent-softer: #101033;
+  --bubble-own: #075985;
+  --brand-glow: 0 0 24px rgb(56 189 248 / 0.35);
+  --elev-pop: 0 0 24px rgb(56 189 248 / 0.35), 0 4px 12px rgb(56 189 248 / 0.18);
+}
+
+[data-accent="violet"] {
+  --brand: #7c3aed;
+  --brand-strong: #5b21b6;
+  --brand-soft: #f5f3ff;
+  --brand-softer: #faf8ff;
+  --brand-vivid: #7c3aed;
+  --brand-cta-from: #6d28d9;
+  --on-brand: #ffffff;
+  --accent: #6d28d9;
+  --accent-soft: #f5f3ff;
+  --accent-softer: #faf9ff;
+  --bubble-own: #ddd6fe;
+  --brand-glow: 0 0 0 rgb(0 0 0 / 0);
+  --elev-pop: 0 8px 24px rgb(124 58 237 / 0.30), 0 2px 6px rgb(124 58 237 / 0.18);
+}
+
+.dark[data-accent="violet"] {
+  --brand: #a78bfa;
+  --brand-strong: #c4b5fd;
+  --brand-soft: #2e1065;
+  --brand-softer: #1b0a3d;
+  --brand-vivid: #c4b5fd;
+  --brand-cta-from: #a78bfa;
+  --on-brand: #17210c;
+  --accent: #c4b5fd;
+  --accent-soft: #2e1065;
+  --accent-softer: #1b0a3d;
+  --bubble-own: #4c1d95;
+  --brand-glow: 0 0 24px rgb(167 139 250 / 0.35);
+  --elev-pop: 0 0 24px rgb(167 139 250 / 0.35), 0 4px 12px rgb(167 139 250 / 0.18);
+}
+
+[data-accent="rose"] {
+  --brand: #e11d48;
+  --brand-strong: #9f1239;
+  --brand-soft: #fff1f2;
+  --brand-softer: #fff8f9;
+  --brand-vivid: #e11d48;
+  --brand-cta-from: #be123c;
+  --on-brand: #ffffff;
+  --accent: #be123c;
+  --accent-soft: #fff1f2;
+  --accent-softer: #fff8f8;
+  --bubble-own: #fecdd3;
+  --brand-glow: 0 0 0 rgb(0 0 0 / 0);
+  --elev-pop: 0 8px 24px rgb(225 29 72 / 0.30), 0 2px 6px rgb(225 29 72 / 0.18);
+}
+
+.dark[data-accent="rose"] {
+  --brand: #fb7185;
+  --brand-strong: #fda4af;
+  --brand-soft: #4c0519;
+  --brand-softer: #2c030f;
+  --brand-vivid: #fda4af;
+  --brand-cta-from: #fb7185;
+  --on-brand: #17210c;
+  --accent: #fb7185;
+  --accent-soft: #4c0519;
+  --accent-softer: #2c030f;
+  --bubble-own: #881337;
+  --brand-glow: 0 0 24px rgb(251 113 133 / 0.35);
+  --elev-pop: 0 0 24px rgb(251 113 133 / 0.35), 0 4px 12px rgb(251 113 133 / 0.18);
+}
+
+[data-accent="amber"] {
+  --brand: #d97706;
+  --brand-strong: #92400e;
+  --brand-soft: #fffbeb;
+  --brand-softer: #fffdf5;
+  --brand-vivid: #f59e0b;
+  --brand-cta-from: #d97706;
+  --on-brand: #17210c;
+  --accent: #b45309;
+  --accent-soft: #fffbeb;
+  --accent-softer: #fffdf6;
+  --bubble-own: #fde68a;
+  --brand-glow: 0 0 0 rgb(0 0 0 / 0);
+  --elev-pop: 0 8px 24px rgb(217 119 6 / 0.30), 0 2px 6px rgb(217 119 6 / 0.18);
+}
+
+.dark[data-accent="amber"] {
+  --brand: #fbbf24;
+  --brand-strong: #fcd34d;
+  --brand-soft: #451a03;
+  --brand-softer: #26120a;
+  --brand-vivid: #fcd34d;
+  --brand-cta-from: #fbbf24;
+  --on-brand: #17210c;
+  --accent: #fbbf24;
+  --accent-soft: #451a03;
+  --accent-softer: #26120a;
+  --bubble-own: #78350f;
+  --brand-glow: 0 0 24px rgb(251 191 36 / 0.35);
+  --elev-pop: 0 0 24px rgb(251 191 36 / 0.35), 0 4px 12px rgb(251 191 36 / 0.18);
+}
+
+[data-accent="graphite"] {
+  --brand: #57534e;
+  --brand-strong: #292524;
+  --brand-soft: #fafaf9;
+  --brand-softer: #fcfcfb;
+  --brand-vivid: #57534e;
+  --brand-cta-from: #44403c;
+  --on-brand: #ffffff;
+  --accent: #44403c;
+  --accent-soft: #f5f5f4;
+  --accent-softer: #fafaf9;
+  --bubble-own: #e7e5e4;
+  --brand-glow: 0 0 0 rgb(0 0 0 / 0);
+  --elev-pop: 0 8px 24px rgb(87 83 78 / 0.30), 0 2px 6px rgb(87 83 78 / 0.18);
+}
+
+.dark[data-accent="graphite"] {
+  --brand: #a8a29e;
+  --brand-strong: #d6d3d1;
+  --brand-soft: #292524;
+  --brand-softer: #1c1917;
+  --brand-vivid: #d6d3d1;
+  --brand-cta-from: #a8a29e;
+  --on-brand: #17210c;
+  --accent: #d6d3d1;
+  --accent-soft: #292524;
+  --accent-softer: #1c1917;
+  --bubble-own: #44403c;
+  --brand-glow: 0 0 24px rgb(168 162 158 / 0.35);
+  --elev-pop: 0 0 24px rgb(168 162 158 / 0.35), 0 4px 12px rgb(168 162 158 / 0.18);
+}
+
+
+/* ── Surface-tone presets ───────────────────────────────────────────────
+   Light: warm (default, no block) | neutral | cool
+   Dark:  forest (default, no block) | graphite | midnight
+   The dark ids must match DARK_SURFACE_IDS in lib/theme.tsx, which is what
+   the Settings picker renders in dark mode. `neutral` and `cool` are
+   light-only: normalizePalette() rewrites a cross-mode id back to the
+   default, so no `.dark[...]` variant is reachable for them.
+   The bg-base values below are mirrored by SURFACE_SWATCH in lib/theme.tsx. */
+
+[data-surface="neutral"] {
+  --bg-base: #f7f7f7;
+  --bg-surface-1: #ffffff;
+  --bg-surface-2: #f0f0f0;
+  --bg-overlay: rgb(9 9 11 / 0.55);
+  --text-1: #18181b;
+  --text-2: #52525b;
+  --text-3: #6b6b74;
+  --line: #e4e4e7;
+  --line-strong: #c9c9cf;
+  --ambient-tint-1: #f4f4f5;
+  --ambient-tint-2: #e4e4e7;
+  --ambient-tint-3: #e0e7ff;
+  --elev-sm: 0 1px 2px rgb(24 24 27 / 0.06), 0 1px 1px rgb(24 24 27 / 0.04);
+  --elev-md: 0 4px 12px rgb(24 24 27 / 0.08), 0 1px 2px rgb(24 24 27 / 0.04);
+  --elev-lg: 0 12px 32px rgb(24 24 27 / 0.12), 0 4px 8px rgb(24 24 27 / 0.06);
+}
+
+/* graphite — near-black, stone-tinted. Matches SURFACE_SWATCH.graphite. */
+.dark[data-surface="graphite"] {
+  --bg-base: #0d0d0e;
+  --bg-surface-1: #141416;
+  --bg-surface-2: #1c1c1f;
+  --bg-overlay: rgb(0 0 0 / 0.72);
+  --text-1: #f4f4f5;
+  --text-2: #b4b4bb;
+  --text-3: #82828c;
+  --line: #27272a;
+  --line-strong: #3a3a40;
+  --ambient-tint-1: #1c1917;
+  --ambient-tint-2: #1f1f23;
+  --ambient-tint-3: #18181b;
+  --elev-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --elev-md: 0 4px 16px rgb(0 0 0 / 0.5), 0 1px 2px rgb(0 0 0 / 0.3);
+  --elev-lg: 0 12px 40px rgb(0 0 0 / 0.6), 0 4px 12px rgb(0 0 0 / 0.4);
+}
+
+[data-surface="cool"] {
+  --bg-base: #f5f7fa;
+  --bg-surface-1: #ffffff;
+  --bg-surface-2: #eceff4;
+  --bg-overlay: rgb(11 18 32 / 0.55);
+  --text-1: #131a24;
+  --text-2: #47536b;
+  --text-3: #66728a;
+  --line: #dde3ec;
+  --line-strong: #c2cbd9;
+  --ambient-tint-1: #dbeafe;
+  --ambient-tint-2: #e0e7ff;
+  --ambient-tint-3: #cffafe;
+  --elev-sm: 0 1px 2px rgb(19 26 36 / 0.06), 0 1px 1px rgb(19 26 36 / 0.04);
+  --elev-md: 0 4px 12px rgb(19 26 36 / 0.08), 0 1px 2px rgb(19 26 36 / 0.04);
+  --elev-lg: 0 12px 32px rgb(19 26 36 / 0.12), 0 4px 8px rgb(19 26 36 / 0.06);
+}
+
+/* midnight — near-black, blue-tinted. Matches SURFACE_SWATCH.midnight. */
+.dark[data-surface="midnight"] {
+  --bg-base: #080b14;
+  --bg-surface-1: #0f131e;
+  --bg-surface-2: #161c2b;
+  --bg-overlay: rgb(0 0 0 / 0.72);
+  --text-1: #eef2fb;
+  --text-2: #aab4cc;
+  --text-3: #7a86a3;
+  --line: #222a3d;
+  --line-strong: #333d55;
+  --ambient-tint-1: #101a2e;
+  --ambient-tint-2: #0d1730;
+  --ambient-tint-3: #111827;
+  --elev-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --elev-md: 0 4px 16px rgb(0 0 0 / 0.5), 0 1px 2px rgb(0 0 0 / 0.3);
+  --elev-lg: 0 12px 40px rgb(0 0 0 / 0.6), 0 4px 12px rgb(0 0 0 / 0.4);
+}
+
+
+/* ── Radius presets ─────────────────────────────────────────────────────── */
+[data-radius="sharp"] {
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+}
+[data-radius="round"] {
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 32px;
+}

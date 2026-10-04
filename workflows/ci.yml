@@ -1,0 +1,79 @@
+# AvoMessage CI — typecheck, lint, tests (DB-backed), build.
+#
+# Tests need a real Postgres (integration suite hits the DB), so a postgres
+# service container is started. Modest resource flags: this repo's CI runners
+# are small, and vitest already runs serially (vitest.config.ts: maxWorkers 1).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Keep the Node heap comfortably under small-runner RAM.
+  NODE_OPTIONS: --max-old-space-size=4096
+  # Prisma engines don't need proxy interference on the runner.
+  PRISMA_HIDE_UPDATE_MESSAGE: "1"
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: avomessage
+          POSTGRES_PASSWORD: avomessage_ci_pw
+          POSTGRES_DB: avomessage_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U avomessage -d avomessage_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://avomessage:avomessage_ci_pw@localhost:5432/avomessage_test
+      # Vitest reads the app's own env from the test file, but the CI DB
+      # string must also be visible when prisma migrate runs.
+      SESSION_SECRET: ci-only-not-a-secret-0123456789abcdef
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply migrations to the test DB
+        run: npx prisma migrate deploy
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests (vitest)
+        run: npm test -- --reporter=basic
+        env:
+          # The suite disables rate limiting itself via tests/setup.ts;
+          # this is belt-and-braces for any direct rate-limit module tests.
+          RATE_LIMIT_DISABLED: "1"
+
+      - name: Build
+        run: npm run build
+
+      - name: Compile custom server (prod path)
+        run: npm run build:server

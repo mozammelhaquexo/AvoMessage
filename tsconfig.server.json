@@ -1,0 +1,36 @@
+{
+  // Compiled-production build of the custom server (server.ts + the
+  // server-side lib it imports). Emits plain JS to dist-server/ runnable with
+  // `node dist-server/server.js` — no tsx needed in production images.
+  //
+  // Notes:
+  // - module/moduleResolution "nodenext": relative imports in server-side lib
+  //   files use explicit `.js` suffixes (./events.js) so both tsx and compiled
+  //   node resolve them.
+  // - Only server-side code is included; the browser realtime client
+  //   (lib/realtime/client.tsx) is bundled by Next.js, never by this config.
+  // - Files using the `@/` path alias are excluded: tsc does not rewrite
+  //   path aliases, so they would break under plain node. The realtime layer
+  //   (lib/realtime/*) is alias-free by design.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist-server",
+    "rootDir": ".",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "declaration": false,
+    "sourceMap": true,
+    "incremental": false,
+    "types": ["node"]
+  },
+  "include": [
+    "server.ts",
+    "lib/realtime/events.ts",
+    "lib/realtime/store.ts",
+    "lib/realtime/notify.ts",
+    "lib/realtime/server.ts",
+    "lib/rate-limit.ts",
+    "lib/prisma-types.ts"
+  ]
+}

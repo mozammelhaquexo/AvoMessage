@@ -1,0 +1,37 @@
+# AvoMessage — local prod-like stack: PostgreSQL 16 + (app runs via `npm run dev`/`start`).
+# Usage:
+#   docker compose up -d            # start postgres (data persists in pgdata volume)
+#   docker compose down             # stop (keeps data)
+#   docker compose down -v          # stop AND delete data
+#
+# The app itself is NOT containerized here in v1 — run `npx tsx server.ts`
+# (or `npm run dev`) on the host with DATABASE_URL pointing at localhost:5432.
+# For fully managed Postgres (Neon / Supabase / RDS), skip this file and set
+# DATABASE_URL to the provider's connection string — see .env.example.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: avomessage-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: avomessage
+      POSTGRES_PASSWORD: avomessage_dev_pw
+      POSTGRES_DB: avomessage_dev
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Optional: auto-apply SQL init scripts placed in ./docker/postgres-init/
+      # - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avomessage -d avomessage_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  pgdata:
+    name: avomessage-pgdata
