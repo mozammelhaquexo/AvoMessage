@@ -327,8 +327,20 @@ export function ChatWindow({ conversationId }: { conversationId: string }) {
 
   const handleRetry = useCallback((id: string) => retryMessage(id), [retryMessage]);
 
-  /* Track which messages arrived live (socket) so only they animate in. */
-  const liveIds = useMemo(() => new Set(live.map((m) => m.id)), [live]);
+  /**
+   * Track which messages arrived live so only they animate in — history
+   * messages must render instantly for a jank-free open.
+   *
+   * "Arrived live" is not the same as "was absent from the history": on the
+   * polling transport the first poll after a join announces the whole visible
+   * page, which includes messages the REST history already loaded (see
+   * `pollMessages` in `lib/realtime/polling.ts`). Subtracting `history` stops
+   * those from animating in a second time.
+   */
+  const liveIds = useMemo(() => {
+    const historic = new Set(history.map((m) => m.id));
+    return new Set(live.filter((m) => !historic.has(m.id)).map((m) => m.id));
+  }, [live, history]);
 
   /* ── Render ──────────────────────────────────────────────────────────── */
 

@@ -1,0 +1,20 @@
+# Files never uploaded to a Vercel deployment.
+#
+# The CLI uploads the working tree and only honours this file (a git-connected
+# deploy uses .gitignore instead), so runtime output and local secrets have to
+# be named explicitly here.
+
+# Local secrets. Vercel supplies its own env; these must never leave the machine.
+.env
+.env.*
+
+# Runtime output — 10k+ files of uploaded media and logged mail in development.
+storage/
+
+# Local build artifacts. Vercel builds from source.
+.next/
+dist-server/
+tsconfig.tsbuildinfo
+
+# Vercel's own link state.
+.vercel/

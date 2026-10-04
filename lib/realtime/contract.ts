@@ -49,6 +49,16 @@ export interface RealtimeSocket {
    * validated server-side, and the two implementations accept the same set.
    */
   emit(event: string, payload?: unknown, ack?: RealtimeAck): void;
+  /**
+   * Start the connection. Idempotent.
+   *
+   * MUST be called by the owner after registering listeners. `socket.io`'s
+   * `io()` happens to auto-connect inside its own constructor, so the
+   * Socket.io implementation treats this as a no-op — but the polling
+   * transport does not start until it is called, and a consumer that relies on
+   * the Socket.io behaviour would silently get no polling at all. Calling it
+   * explicitly is what makes the two interchangeable.
+   */
   connect(): void;
   disconnect(): void;
 }

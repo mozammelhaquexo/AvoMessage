@@ -158,6 +158,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       setLastError(payload?.message ?? 'realtime error');
     });
 
+    // `io()` starts connecting inside its own constructor; the polling
+    // transport does not, so start it here explicitly. Listeners are already
+    // registered, which is what lets the `connect` event be observed and the
+    // room re-subscription above run. Without this the poller never starts:
+    // nothing on the deployed site would update until a conversation was
+    // opened, and even then only that one thread would.
+    s.connect();
+
     return () => {
       s.off('connect', resubscribe);
       s.off('disconnect', onDisconnect);

@@ -223,22 +223,46 @@ describe('transport preference', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('polling transport — messages', () => {
-  it('seeds on the first poll, then announces new messages oldest-first', async () => {
+  it('announces the visible page on the first poll, then only additions', async () => {
     const h = createHarness();
     const arrivals = collect(h.socket, ServerToClient.MESSAGE_NEW);
 
-    // History exists when the thread opens — ChatWindow renders it from REST
-    // itself, so the transport's first pass must record it silently.
+    // History already exists when the thread opens. The transport announces it
+    // anyway: `ChatWindow` merges history and live by message id, so a
+    // redundant announcement is deduped, while a silent baseline pass can lose
+    // a message for good. See the `pollMessages` doc comment.
     h.store.messages.set('c1', [msg('m0')]);
     h.socket.emit(ClientToServer.CONVERSATION_JOIN, { conversationId: 'c1' });
     h.socket.connect();
     await h.settle();
-    expect(arrivals).toHaveLength(0);
+    expect(ids(arrivals)).toEqual(['m0']);
 
     // Two new messages arrive; the API is newest-first, the UI appends.
     h.store.messages.set('c1', [msg('m2'), msg('m1'), msg('m0')]);
     await h.tick();
-    expect(ids(arrivals)).toEqual(['m1', 'm2']);
+    expect(ids(arrivals)).toEqual(['m0', 'm1', 'm2']);
+  });
+
+  it('does not lose a message that arrived before the first poll of a thread', async () => {
+    const h = createHarness();
+    const arrivals = collect(h.socket, ServerToClient.MESSAGE_NEW);
+
+    // Already connected and polling other rooms — the thread is opened later,
+    // which is what navigating to /messages/:id does.
+    h.socket.connect();
+    await h.settle();
+
+    h.socket.emit(ClientToServer.CONVERSATION_JOIN, { conversationId: 'c1' });
+    // A message from another client lands AFTER the thread's own REST history
+    // read returned but BEFORE this conversation's first poll. A baseline pass
+    // would record it without announcing it, and every later poll would see it
+    // unchanged and stay silent — the message would never appear.
+    h.store.messages.set('c1', [msg('m1')]);
+
+    await h.tick();
+    await h.tick();
+
+    expect(ids(arrivals)).toEqual(['m1']);
   });
 
   it('announces an edit as message:updated, not as a new message', async () => {
@@ -250,13 +274,16 @@ describe('polling transport — messages', () => {
     h.socket.emit(ClientToServer.CONVERSATION_JOIN, { conversationId: 'c1' });
     h.socket.connect();
     await h.settle();
+    // The first pass announces m1 once — the edit below must not announce it
+    // again as a second new message.
+    expect(ids(arrivals)).toEqual(['m1']);
 
     h.store.messages.set('c1', [
       msg('m1', { body: 'edited', editedAt: '2026-10-04T11:00:00.000Z' }),
     ]);
     await h.tick();
 
-    expect(arrivals).toHaveLength(0);
+    expect(ids(arrivals)).toEqual(['m1']);
     expect(edits).toEqual([
       {
         messageId: 'm1',
@@ -312,12 +339,12 @@ describe('polling transport — messages', () => {
     h.socket.connect();
     await h.settle();
 
-    // Three polls with an unchanged thread.
+    // Three polls with an unchanged thread: m1 is announced exactly once.
     await h.tick();
     await h.tick();
     await h.tick();
 
-    expect(arrivals).toHaveLength(0);
+    expect(ids(arrivals)).toEqual(['m1']);
   });
 
   it('stops polling a conversation once it is left', async () => {
@@ -460,6 +487,9 @@ describe('polling transport — receipts and badges', () => {
     h.store.members.set('c1', [
       { user: { id: 'u2' }, lastReadAt: '2026-10-04T10:05:00.000Z' },
     ]);
+    // Receipts come from the heaviest endpoint, so they ride every other tick.
+    await h.tick();
+    expect(reads).toHaveLength(0);
     await h.tick();
 
     expect(reads).toEqual([
@@ -469,6 +499,32 @@ describe('polling transport — receipts and badges', () => {
         lastReadAt: '2026-10-04T10:05:00.000Z',
       },
     ]);
+  });
+
+  it('polls the read-receipt endpoint less often than messages', async () => {
+    const h = createHarness();
+
+    h.store.members.set('c1', [
+      { user: { id: 'u2' }, lastReadAt: '2026-10-04T10:00:00.000Z' },
+    ]);
+    h.socket.emit(ClientToServer.CONVERSATION_JOIN, { conversationId: 'c1' });
+    h.socket.connect();
+    await h.settle();
+    h.calls.length = 0;
+
+    await h.tick();
+    await h.tick();
+    await h.tick();
+    await h.tick();
+    await h.tick();
+    await h.tick();
+
+    const detail = pathsOf(h.calls, 'GET').filter((p) => p === '/api/conversations/c1').length;
+    const messages = pathsOf(h.calls, 'GET').filter((p) => p.includes('/messages')).length;
+
+    // Over 6 ticks: messages on every tick, the heavy detail call on half.
+    expect(messages).toBe(6);
+    expect(detail).toBe(3);
   });
 
   it('emits conversation:updated when an unread count changes', async () => {
@@ -484,7 +540,122 @@ describe('polling transport — receipts and badges', () => {
     await h.tick();
     await h.tick();
 
-    expect(updates).toEqual([{ conversationId: 'c1', unreadCount: 3 }]);
+    expect(updates).toEqual([
+      { conversationId: 'c1', lastMessageAt: undefined, messageId: undefined, unreadCount: 3 },
+    ]);
+  });
+
+  it('emits conversation:updated when only the row tail moves', async () => {
+    const h = createHarness();
+    const updates = collect(h.socket, ServerToClient.CONVERSATION_UPDATED);
+
+    h.store.conversationList = [
+      { id: 'c1', unreadCount: 0, lastMessageAt: '2026-10-04T10:00:00.000Z' },
+    ];
+    h.socket.connect();
+    await h.settle();
+
+    // A message that does NOT move the unread count — your own, sent from
+    // another tab, or one read as it arrived. The socket server emits on every
+    // message, and its payload carries `lastMessageAt` for exactly this; a
+    // diff that watched only `unreadCount` would leave the row's preview
+    // showing the previous message for the rest of the session.
+    h.store.conversationList = [
+      {
+        id: 'c1',
+        unreadCount: 0,
+        lastMessageAt: '2026-10-04T10:05:00.000Z',
+        lastMessage: { id: 'm9' },
+      },
+    ];
+    await h.tick();
+    await h.tick();
+
+    expect(updates).toEqual([
+      {
+        conversationId: 'c1',
+        lastMessageAt: '2026-10-04T10:05:00.000Z',
+        messageId: 'm9',
+        unreadCount: 0,
+      },
+    ]);
+  });
+
+  it('announces a conversation that appears while the list was empty', async () => {
+    const h = createHarness();
+    const updates = collect(h.socket, ServerToClient.CONVERSATION_UPDATED);
+
+    // An account in no conversations at all. The seeded snapshot is therefore
+    // EMPTY — which is a perfectly valid state and must not be mistaken for
+    // "we have never polled the list". Treating it that way meant the guard
+    // re-armed on every poll, so a conversation appearing for the first time
+    // with its tail already set was never announced: measured against the live
+    // API at the real 6 s cadence, zero events and a row frozen on
+    // "No messages yet".
+    h.store.conversationList = [];
+    h.socket.connect();
+    await h.settle();
+
+    h.store.conversationList = [
+      {
+        id: 'c1',
+        unreadCount: 0,
+        lastMessageAt: '2026-10-04T10:05:00.000Z',
+        lastMessage: { id: 'm1' },
+      },
+    ];
+    await h.tick();
+    await h.tick();
+    await h.tick();
+
+    expect(updates).toEqual([
+      {
+        conversationId: 'c1',
+        lastMessageAt: '2026-10-04T10:05:00.000Z',
+        messageId: 'm1',
+        unreadCount: 0,
+      },
+    ]);
+  });
+
+  it('announces a conversation first seen with its tail already set', async () => {
+    const h = createHarness();
+    const updates = collect(h.socket, ServerToClient.CONVERSATION_UPDATED);
+
+    // Seeded without the conversation.
+    h.store.conversationList = [
+      { id: 'other', unreadCount: 0, lastMessageAt: '2026-10-04T10:00:00.000Z' },
+    ];
+    h.socket.connect();
+    await h.settle();
+
+    // The conversation appears for the FIRST time already carrying a message.
+    // This is the ordering the live 6 s list cadence produces constantly: the
+    // thread is opened, a message lands, and the poller's first sighting of the
+    // row is the next list poll. Skipping unknown rows left the preview stuck
+    // on "No messages yet" with no later poll able to correct it, because
+    // nothing about the row changes again.
+    h.store.conversationList = [
+      { id: 'other', unreadCount: 0, lastMessageAt: '2026-10-04T10:00:00.000Z' },
+      {
+        id: 'c1',
+        unreadCount: 0,
+        lastMessageAt: '2026-10-04T10:05:00.000Z',
+        lastMessage: { id: 'm1' },
+      },
+    ];
+    await h.tick();
+    await h.tick();
+    await h.tick();
+
+    expect(updates).toEqual([
+      {
+        conversationId: 'c1',
+        lastMessageAt: '2026-10-04T10:05:00.000Z',
+        messageId: 'm1',
+        unreadCount: 0,
+      },
+    ]);
   });
 
   it('seeds notifications silently, then announces only genuinely new ones', async () => {
@@ -609,6 +780,27 @@ describe('polling transport — lifecycle', () => {
     h.socket.connect();
     expect(h.socket.connected).toBe(true);
     await h.settle();
+  });
+
+  it('does nothing at all until connect() is called', async () => {
+    // This pins the contract that `SocketProvider` must call `connect()`.
+    // `io()` auto-connects inside its own constructor; this transport does not.
+    // A consumer that relied on the Socket.io behaviour would get a connection
+    // that is created, reports itself live, and silently polls nothing —
+    // exactly the bug a browser check caught on the deployed site.
+    const h = createHarness();
+
+    h.socket.emit(ClientToServer.CONVERSATION_JOIN, { conversationId: 'c1' });
+    await h.tick();
+    await h.tick();
+
+    expect(h.calls).toHaveLength(0);
+    expect(h.socket.connected).toBe(false);
+
+    // And once started, it works.
+    h.socket.connect();
+    await h.settle();
+    expect(h.calls.length).toBeGreaterThan(0);
   });
 
   it('honours NEXT_PUBLIC_REALTIME_POLL_MS, and refuses a nonsensical value', () => {

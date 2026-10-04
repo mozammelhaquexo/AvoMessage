@@ -54,6 +54,41 @@ export class DatabaseNotConfiguredError extends Error {
   }
 }
 
+/**
+ * How many connections this instance may hold open at once.
+ *
+ * `pg.Pool` defaults to 10, which is right for one long-lived server and wrong
+ * for serverless: every warm function instance owns its own pool, so ten
+ * instances ask the database for a hundred connections. Measured on the
+ * deployed app during a burst of traffic:
+ *
+ *     Raw query failed. Code: `53300`.
+ *     Message: `too many connections for role "prisma_migration"`
+ *
+ * `/api/health` went `degraded` and every request that touches the database —
+ * login included — answered 500, until the idle instances went cold and their
+ * connections were returned. Three is ample for the concurrency one instance
+ * handles and keeps the whole fleet inside the server's limit.
+ */
+function poolSize(): number {
+  const raw = Number.parseInt(process.env.DATABASE_POOL_MAX ?? '', 10);
+  if (Number.isFinite(raw) && raw >= 1) return Math.min(raw, 20);
+  return process.env.VERCEL ? 3 : 10;
+}
+
+/**
+ * How long an idle connection is kept before being returned.
+ *
+ * A serverless instance may never serve another request, so holding a
+ * connection open "just in case" is exactly the wrong trade. Shorter on
+ * Vercel for that reason.
+ */
+function idleTimeoutMs(): number {
+  const raw = Number.parseInt(process.env.DATABASE_IDLE_TIMEOUT_MS ?? '', 10);
+  if (Number.isFinite(raw) && raw >= 0) return raw;
+  return process.env.VERCEL ? 5_000 : 10_000;
+}
+
 function createClient(): PrismaClient {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
@@ -65,7 +100,14 @@ function createClient(): PrismaClient {
         'for serverless hosts, and run supabase.sql once so the schema exists.',
     );
   }
-  const adapter = new PrismaPg({ connectionString });
+  const adapter = new PrismaPg({
+    connectionString,
+    max: poolSize(),
+    idleTimeoutMillis: idleTimeoutMs(),
+    // Never wait forever for a free pool slot: failing at 10s with a real
+    // message beats a request that hangs until the platform kills it.
+    connectionTimeoutMillis: 10_000,
+  });
   return new PrismaClient({ adapter });
 }
 

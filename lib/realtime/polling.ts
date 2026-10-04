@@ -21,7 +21,10 @@
  * WHAT IT PRESERVES
  *   messages   `GET /api/conversations/:id/messages` newest page, diffed
  *              against a per-conversation snapshot → `message:new`,
- *              `message:updated`, `message:deleted`
+ *              `message:updated`, `message:deleted`. The first poll after a
+ *              join announces the whole page it sees, not just later
+ *              additions — see `pollMessages` for the race that makes a
+ *              silent baseline pass lose messages outright.
  *   sending    `emit('message:send', …)` → `POST /api/conversations/:id/
  *              messages` with the same `clientId` idempotency key the socket
  *              path uses, ack'd with the same `{ ok, message }` shape
@@ -70,6 +73,8 @@ const NOTIFICATION_LIMIT = 20;
 const CONVERSATION_LIMIT = 50;
 /** The conversation list is the heaviest payload — poll it every Nth tick. */
 const LIST_EVERY_N_TICKS = 2;
+/** Read receipts come from the heaviest endpoint; see `pollReceipts`. */
+const RECEIPTS_EVERY_N_TICKS = 2;
 /** Presence heartbeat, in ticks (10 × 3 s = 30 s, matching the socket beat). */
 const PRESENCE_EVERY_N_TICKS = 10;
 const DEFAULT_PRESENCE_STATUS = 'ONLINE';
@@ -146,6 +151,10 @@ interface MessagePage {
 interface ConversationListItem {
   id: string;
   unreadCount?: number;
+  /** ISO timestamp of the newest message — the row's preview keys off this. */
+  lastMessageAt?: string;
+  /** The newest message itself; only its id is read. */
+  lastMessage?: { id?: string } | null;
 }
 
 interface ConversationDetail {
@@ -169,12 +178,6 @@ interface ConversationTrack {
   messages: Map<string, MessageFingerprint>;
   /** userId → lastReadAt, as of the previous poll. */
   readAt: Map<string, string>;
-  /**
-   * False until the first successful poll. The first pass records the thread
-   * without announcing anything — otherwise opening a chat would fire 50
-   * `message:new` events for messages the REST history already loaded.
-   */
-  seeded: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -241,14 +244,23 @@ export function createPollingSocket(
   let inFlight = false;
   /** Counts down to the next conversation-list poll. */
   let listCountdown = 0;
+  /** Counts down to the next read-receipt poll. */
+  let receiptCountdown = 0;
   /** Counts down to the next presence heartbeat. */
   let presenceCountdown = PRESENCE_EVERY_N_TICKS;
   /** Last presence payload the client asked us to publish. */
   let lastPresence: { status?: string } | null = null;
   /** Notification ids already announced. `null` until the first poll seeds it. */
   let seenNotifications: Set<string> | null = null;
-  /** conversationId → unreadCount, from the previous list poll. */
-  let unreadByConversation = new Map<string, number>();
+  /**
+   * conversationId → the list row, from the previous list poll.
+   *
+   * `null` means "not polled yet", which is NOT the same as an empty map. An
+   * account in no conversations has an empty list, and inferring "first pass"
+   * from emptiness re-armed the seed on every poll — so a conversation that
+   * appeared later was never compared against anything.
+   */
+  let listSnapshot: Map<string, ConversationListItem> | null = null;
 
   // ── Listener registry ───────────────────────────────────────────────────
 
@@ -302,38 +314,87 @@ export function createPollingSocket(
     }
   }
 
+  /**
+   * The conversation list is the only REST view carrying each row's tail
+   * (`lastMessage`/`lastMessageAt`), and `ConversationList` refreshes itself
+   * on `conversation:updated`. So the diff has to watch the tail as well as
+   * the unread count: the socket server emits on EVERY message, and a message
+   * that does not move the unread count — your own, sent from another tab, or
+   * one you read as it arrived — would otherwise leave the row's preview
+   * showing the previous message indefinitely.
+   */
   async function pollConversationList(): Promise<void> {
     const res = await rest.get<
       ConversationListItem[] | { data?: ConversationListItem[] }
     >(`/api/conversations?limit=${CONVERSATION_LIMIT}`);
     const list = Array.isArray(res) ? res : (res?.data ?? []);
 
-    const next = new Map<string, number>();
+    const next = new Map<string, ConversationListItem>();
     for (const item of list) {
-      if (item?.id) next.set(item.id, item.unreadCount ?? 0);
+      if (item?.id) next.set(item.id, item);
     }
 
-    const previous = unreadByConversation;
-    unreadByConversation = next;
-    // Nothing to compare against on the first pass.
-    if (previous.size === 0) return;
+    const previous = listSnapshot;
+    listSnapshot = next;
+    // First pass: record only — there is genuinely nothing to compare against.
+    if (previous === null) return;
 
-    for (const [conversationId, unreadCount] of next) {
-      if (previous.get(conversationId) === unreadCount) continue;
-      fire(ServerToClient.CONVERSATION_UPDATED, { conversationId, unreadCount });
+    for (const [conversationId, item] of next) {
+      const before = previous.get(conversationId);
+      // A conversation absent from the previous snapshot still has to be
+      // announced. Its row may already carry a tail the list has never seen:
+      // the list is polled only every other tick, so the poller's FIRST
+      // sighting of a conversation routinely lands after the first message in
+      // it (open a thread, send, and the next list poll is 6 s away).
+      // Skipping those rows left the preview frozen on "No messages yet"
+      // forever — reproduced against the live API with the real 6 s cadence:
+      // zero events, row never refreshed.
+      const unreadChanged = (before?.unreadCount ?? 0) !== (item.unreadCount ?? 0);
+      const tailChanged = before?.lastMessageAt !== item.lastMessageAt;
+      if (!unreadChanged && !tailChanged) continue;
+
+      // Same payload shape the socket server sends, so AppShell (which reads
+      // `unreadCount`) and ConversationList (which refreshes wholesale) both
+      // behave identically on either transport.
+      fire(ServerToClient.CONVERSATION_UPDATED, {
+        conversationId,
+        lastMessageAt: item.lastMessageAt,
+        messageId: item.lastMessage?.id,
+        unreadCount: item.unreadCount,
+      });
     }
     // A conversation that disappeared (removed from, or deleted) is not
     // announced — AppShell's badge map is cleared on navigation anyway.
   }
 
-  async function pollConversation(conversationId: string): Promise<void> {
+  /**
+   * Diff the newest page against the per-conversation snapshot.
+   *
+   * There is deliberately NO silent first pass. A baseline pass would have to
+   * swallow whatever it found, and the first pass runs up to one interval
+   * AFTER the thread mounted — while `ChatWindow` fetched its history at
+   * mount. A message created in that gap is in neither: the page's history
+   * read predates it, and the transport's baseline records it without
+   * announcing it. It was then permanently invisible, because every later
+   * poll saw it unchanged and stayed silent. Measured on the deployment: a
+   * message posted 2.5 s after a thread opened never appeared, with the
+   * poller fetching `/messages` four more times in the next 15 s and
+   * answering 200 every time.
+   *
+   * So the first pass announces the page it sees, like any other pass. That
+   * is safe because the only consumer, `useConversation` → `ChatWindow`,
+   * merges `history` and `live` by message id and sorts by `createdAt`
+   * (`ChatWindow.tsx`, "Merge history + live"), so re-announcing a message
+   * the REST history already loaded is a no-op rather than a duplicate.
+   * Erring towards announcing costs a redundant event; erring towards
+   * swallowing costs the message.
+   */
+  async function pollMessages(conversationId: string): Promise<void> {
     const track = conversations.get(conversationId);
     if (!track) return;
 
-    const path = `/api/conversations/${encodeURIComponent(conversationId)}`;
-
     const page = await rest.get<MessagePage>(
-      `${path}/messages?limit=${MESSAGE_LIMIT}`,
+      `/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=${MESSAGE_LIMIT}`,
     );
     const items = Array.isArray(page?.data) ? page.data : [];
 
@@ -344,7 +405,6 @@ export function createPollingSocket(
       const previous = track.messages.get(view.id);
       track.messages.set(view.id, next);
 
-      if (!track.seeded) continue; // baseline pass
       if (!previous) {
         arrived.push(view);
       } else if (sameFingerprint(previous, next)) {
@@ -359,7 +419,6 @@ export function createPollingSocket(
         });
       }
     }
-    track.seeded = true;
 
     // `data` is newest-first and the UI appends, so emit oldest-first.
     // Re-stamp `conversationId`: a tombstone carries an empty one, and
@@ -369,10 +428,22 @@ export function createPollingSocket(
         message: { ...view, conversationId },
       });
     }
+  }
 
-    // Read receipts. `GET /api/conversations/:id` is the only REST view that
-    // exposes each member's `lastReadAt`.
-    const detail = await rest.get<ConversationDetail>(path);
+  /**
+   * Read receipts. `GET /api/conversations/:id` is the only REST view that
+   * exposes each member's `lastReadAt`, and it is the heaviest call in the
+   * loop — it joins members and their users. It is also the least
+   * latency-sensitive signal here, so it rides every Nth tick instead of every
+   * one, halving the request count on an open thread.
+   */
+  async function pollReceipts(conversationId: string): Promise<void> {
+    const track = conversations.get(conversationId);
+    if (!track) return;
+
+    const detail = await rest.get<ConversationDetail>(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+    );
     for (const member of detail?.members ?? []) {
       const userId = member?.user?.id;
       const lastReadAt = member?.lastReadAt;
@@ -404,8 +475,13 @@ export function createPollingSocket(
       }
       listCountdown -= 1;
 
+      const withReceipts = receiptCountdown <= 0;
+      if (withReceipts) receiptCountdown = RECEIPTS_EVERY_N_TICKS;
+      receiptCountdown -= 1;
+
       for (const conversationId of [...conversations.keys()]) {
-        jobs.push(pollConversation(conversationId));
+        jobs.push(pollMessages(conversationId));
+        if (withReceipts) jobs.push(pollReceipts(conversationId));
       }
 
       presenceCountdown -= 1;
@@ -515,7 +591,6 @@ export function createPollingSocket(
           conversations.set(conversationId, {
             messages: new Map(),
             readAt: new Map(),
-            seeded: false,
           });
         }
         return;
@@ -562,9 +637,10 @@ export function createPollingSocket(
     if (connected) return;
     connected = true;
     listCountdown = 0;
+    receiptCountdown = 0;
     presenceCountdown = PRESENCE_EVERY_N_TICKS;
     seenNotifications = null;
-    unreadByConversation = new Map();
+    listSnapshot = null;
 
     // `connect` first: the provider re-subscribes its rooms on this event, and
     // those `conversation:join` emits are what register the threads we poll.
