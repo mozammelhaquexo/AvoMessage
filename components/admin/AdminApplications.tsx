@@ -143,18 +143,8 @@ export function AdminApplications() {
   return (
     <div className="flex flex-col gap-4">
       <SaaSToolbar
+        variant="page"
         label="Applications toolbar"
-        sections={[
-          {
-            id: "applications",
-            label: "Applications",
-            href: "/admin/applications",
-            keywords: ["manager", "review", "approve", "decline"],
-          },
-          { id: "managers", label: "Managers", href: "/admin/managers" },
-          { id: "users", label: "Users", href: "/admin/users" },
-          { id: "content", label: "Content", href: "/admin/content" },
-        ]}
         onExport={exportCsv}
       />
 

@@ -55,6 +55,20 @@ export interface SaaSToolbarProps {
   className?: string;
   /** Rendered after the built-in controls — page-specific filters etc. */
   children?: ReactNode;
+  /**
+   * Which bar this is.
+   *
+   * `"console"` (default) is the console-level bar: the search palette,
+   * Refresh and the shortcuts panel — one per console, rendered by the shell.
+   *
+   * `"page"` is a page-level bar. It renders ONLY what the page itself
+   * supplies (Export CSV, `children`) because the console bar directly above
+   * already owns search, Refresh and help. The Admin console shipped with
+   * both: AdminShell rendered a full toolbar and then Applications, Content
+   * and Managers each rendered a second, near-identical one — two search
+   * boxes, two Refresh buttons and two help buttons stacked on one page.
+   */
+  variant?: "console" | "page";
 }
 
 /** True when the event target is somewhere the user is typing. */
@@ -76,7 +90,9 @@ export function SaaSToolbar({
   label = "Console toolbar",
   className,
   children,
+  variant = "console",
 }: SaaSToolbarProps) {
+  const isConsole = variant === "console";
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -193,7 +209,7 @@ export function SaaSToolbar({
         className,
       )}
     >
-      {sections && sections.length > 0 && (
+      {isConsole && sections && sections.length > 0 && (
         <div ref={paletteRef} className="relative min-w-[12rem] flex-1">
           <Icon
             name="search"
@@ -256,16 +272,18 @@ export function SaaSToolbar({
         </div>
       )}
 
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={refresh}
-        loading={refreshing}
-        aria-label="Refresh this page"
-      >
-        <Icon name="refresh" size={15} aria-hidden />
-        <span className="ml-1.5">Refresh</span>
-      </Button>
+      {isConsole && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={refresh}
+          loading={refreshing}
+          aria-label="Refresh this page"
+        >
+          <Icon name="refresh" size={15} aria-hidden />
+          <span className="ml-1.5">Refresh</span>
+        </Button>
+      )}
 
       {onExport && (
         <Button variant="outline" size="sm" onClick={onExport} aria-label={exportLabel}>
@@ -274,40 +292,42 @@ export function SaaSToolbar({
         </Button>
       )}
 
-      <div ref={hintsRef} className="relative">
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label="Keyboard shortcuts"
-          aria-expanded={hintsOpen}
-          onClick={() => setHintsOpen((v) => !v)}
-        >
-          <Icon name="help" size={15} aria-hidden />
-        </Button>
-        {hintsOpen && (
-          <div
-            role="dialog"
+      {isConsole && (
+        <div ref={hintsRef} className="relative">
+          <Button
+            variant="ghost"
+            size="sm"
             aria-label="Keyboard shortcuts"
-            className="absolute right-0 top-[calc(100%+6px)] z-40 w-64 rounded-lg border border-line bg-surface p-3 shadow-pop"
+            aria-expanded={hintsOpen}
+            onClick={() => setHintsOpen((v) => !v)}
           >
-            <p className="mb-2 text-caption font-semibold uppercase tracking-wide text-ink-3">
-              Shortcuts
-            </p>
-            <dl className="flex flex-col gap-1.5">
-              {shortcutRows.map((row) => (
-                <div key={row.keys} className="flex items-center justify-between gap-3">
-                  <dt className="text-body-sm text-ink-2">{row.label}</dt>
-                  <dd>
-                    <kbd className="rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-tiny text-ink-2">
-                      {row.keys}
-                    </kbd>
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        )}
-      </div>
+            <Icon name="help" size={15} aria-hidden />
+          </Button>
+          {hintsOpen && (
+            <div
+              role="dialog"
+              aria-label="Keyboard shortcuts"
+              className="absolute right-0 top-[calc(100%+6px)] z-40 w-64 rounded-lg border border-line bg-surface p-3 shadow-pop"
+            >
+              <p className="mb-2 text-caption font-semibold uppercase tracking-wide text-ink-3">
+                Shortcuts
+              </p>
+              <dl className="flex flex-col gap-1.5">
+                {shortcutRows.map((row) => (
+                  <div key={row.keys} className="flex items-center justify-between gap-3">
+                    <dt className="text-body-sm text-ink-2">{row.label}</dt>
+                    <dd>
+                      <kbd className="rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-tiny text-ink-2">
+                        {row.keys}
+                      </kbd>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          )}
+        </div>
+      )}
 
       {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
     </div>

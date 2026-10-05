@@ -38,6 +38,45 @@ interface CompanyManagerRow extends PublicCompany {
   managerCount: number;
 }
 
+/**
+ * Orientation block for the section, answering "where is the Manager Section
+ * and what is in it?" without a support ticket.
+ *
+ * The nav calls it "Managers" and the page lists companies, which reads as a
+ * mismatch until you know the product rule: a manager only ever exists inside
+ * a company, so the company row IS the manager row. Saying that out loud — and
+ * pointing at Applications, where the pending requests actually arrive — is
+ * cheaper than renaming anything, and it keeps the drill-down path obvious.
+ */
+function ManagerSectionIntro() {
+  return (
+    <div className="flex flex-wrap items-start gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3.5">
+      <span
+        aria-hidden
+        className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent"
+      >
+        <Icon name="shield" size={18} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <h2 className="text-body-sm font-semibold text-ink">Manager Section</h2>
+        <p className="mt-0.5 text-body-sm text-ink-2">
+          Every manager on AvoMessage lives inside a company, so this section lists
+          companies — the number beside each one is how many managers it has. Open a
+          company to add or remove its managers and members, or to deactivate it.
+        </p>
+        <p className="mt-1 text-caption text-ink-3">
+          New requests to <span className="font-medium">become</span> a manager are reviewed
+          under Applications, not here.
+        </p>
+      </div>
+      <Button href="/admin/applications" variant="outline" size="sm" className="shrink-0">
+        <Icon name="send" size={15} aria-hidden className="mr-1.5" />
+        Manager applications
+      </Button>
+    </div>
+  );
+}
+
 const MANAGER_COLUMNS: CsvColumn<CompanyManagerRow>[] = [
   { header: "id", value: (r) => r.id },
   { header: "company", value: (r) => r.name },
@@ -139,19 +178,11 @@ export function AdminManagers() {
 
   return (
     <div className="flex flex-col gap-4">
+      <ManagerSectionIntro />
+
       <SaaSToolbar
+        variant="page"
         label="Managers toolbar"
-        sections={[
-          {
-            id: "managers",
-            label: "Managers",
-            href: "/admin/managers",
-            keywords: ["company", "role", "grant", "owners"],
-          },
-          { id: "applications", label: "Applications", href: "/admin/applications" },
-          { id: "users", label: "Users", href: "/admin/users" },
-          { id: "content", label: "Content", href: "/admin/content" },
-        ]}
         onExport={exportCsv}
       />
 

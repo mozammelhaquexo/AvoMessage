@@ -35,12 +35,33 @@ const SECTIONS: ScrollNavItem[] = [
   { id: "settings", label: "Settings", icon: "settings", href: "/admin/settings" },
 ];
 
-/** Palette search terms that are not in the label. */
+/**
+ * Palette search terms that are not in the label.
+ *
+ * `managers` deliberately carries the words people actually type when they are
+ * looking for it. "Where is the Manager Section?" is a question the nav should
+ * answer from the palette alone, and "manager" / "manager panel" / "manager
+ * section" were not in this list — the section was findable only by somebody
+ * who already knew it was called "Managers".
+ */
 const SECTION_KEYWORDS: Record<string, string[]> = {
   dashboard: ["overview", "home", "stats"],
   users: ["accounts", "members", "people", "suspend"],
-  applications: ["manager", "apply", "approve", "review"],
-  managers: ["company", "companies", "workspaces", "organisations", "role", "grant"],
+  applications: ["manager", "manager application", "apply", "approve", "review", "requests"],
+  managers: [
+    "manager",
+    "managers",
+    "manager panel",
+    "manager section",
+    "manage",
+    "company",
+    "companies",
+    "workspaces",
+    "organisations",
+    "role",
+    "grant",
+    "promote",
+  ],
   content: ["posts", "comments", "delete"],
   reports: ["abuse", "flag", "queue"],
   moderation: ["delete", "suspend", "message"],

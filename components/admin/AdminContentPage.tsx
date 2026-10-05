@@ -72,14 +72,9 @@ export function AdminContentPage() {
   return (
     <div className="flex flex-col gap-4">
       <SaaSToolbar
+        variant="page"
         label="Content toolbar"
-        sections={[
-          { id: "content", label: "Content", href: "/admin/content", keywords: ["posts", "comments"] },
-          { id: "moderation", label: "Moderation", href: "/admin/moderation", keywords: ["delete", "suspend"] },
-          { id: "reports", label: "Reports", href: "/admin/reports", keywords: ["abuse"] },
-        ]}
         onExport={exportCsv}
-        hints={[{ keys: "Esc", label: "Close this panel" }]}
       />
 
       <Tabs tabs={tabs} value={tab} onValueChange={setTab} label="Content type">
