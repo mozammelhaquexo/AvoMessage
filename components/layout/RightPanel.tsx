@@ -1,6 +1,6 @@
 /**
  * components/layout/RightPanel.tsx — desktop right utility rail (xl+).
- * Search shortcut, trending hashtags, and footer links.
+ * Search shortcut, trending hashtags, active company members, footer links.
  */
 "use client";
 
@@ -10,6 +10,7 @@ import { Card, Icon, Skeleton } from "@/components/ui";
 import { apiGet, ApiError } from "@/lib/api-client";
 import type { HashtagResult } from "@/lib/api-types";
 import { SearchBar } from "@/components/search/SearchBar";
+import { ActiveCompanyMembers } from "./ActiveCompanyMembers";
 
 export function RightPanel() {
   const [tags, setTags] = useState<HashtagResult[] | null>(null);
@@ -69,6 +70,11 @@ export function RightPanel() {
           )}
         </div>
       </Card>
+
+      {/* Teammates, directly under Trending — the rail is a shortcut panel, and
+          "who from my companies is around" is the thing people actually reach
+          for while reading the feed. */}
+      <ActiveCompanyMembers />
 
       <nav aria-label="Footer" className="px-2 text-caption text-ink-3">
         <ul className="flex flex-wrap gap-x-3 gap-y-1">

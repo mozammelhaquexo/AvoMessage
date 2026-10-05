@@ -10,7 +10,15 @@
  *   scrollable, smooth-scroll by `scrollAmount` px on click.
  * - All affordances reactively reflect scroll position, resize, and font load.
  *
- * Used by /admin (admin console) and /manage/[slug] (company console).
+ * Used by /admin (admin console), /manage/[slug] (company console), and
+ * /notifications (the filter bar).
+ *
+ * TWO MODES
+ * Pass `items` + `renderItem` for a list of links (the consoles). Pass
+ * `children` instead when the content is not a list of links — the notification
+ * filters are a `SegmentedControl` whose sliding indicator lives inside it, so
+ * re-rendering its options here would throw that away. Both modes get the same
+ * fades and chevrons.
  */
 
 import {
@@ -31,14 +39,20 @@ export interface ScrollNavItem {
 }
 
 interface ScrollNavProps {
-  items: ScrollNavItem[];
-  activeId: string;
+  /** Link items. Omit when using `children`. */
+  items?: ScrollNavItem[];
+  /** Id of the active item. Omit when using `children`. */
+  activeId?: string;
   /** A11y label for the nav element (e.g. "Admin sections"). */
   ariaLabel: string;
   /** Render fn for each item — receives the item + active flag. */
-  renderItem: (item: ScrollNavItem, active: boolean) => ReactNode;
+  renderItem?: (item: ScrollNavItem, active: boolean) => ReactNode;
+  /** Arbitrary scrollable content, used instead of `items`. */
+  children?: ReactNode;
   /** Pixels to scroll per chevron click. Defaults to 220. */
   scrollAmount?: number;
+  /** Extra classes for the wrapper (e.g. to drop the default top margin). */
+  className?: string;
 }
 
 type ScrollEdge = "start" | "middle" | "end";
@@ -48,7 +62,9 @@ export function ScrollNav({
   activeId,
   ariaLabel,
   renderItem,
+  children,
   scrollAmount = 220,
+  className,
 }: ScrollNavProps) {
   const navRef = useRef<HTMLElement>(null);
   const [edge, setEdge] = useState<ScrollEdge>("start");
@@ -90,7 +106,7 @@ export function ScrollNav({
   const showRightEdge = edge !== "end";
 
   return (
-    <div className="relative mt-5">
+    <div className={cn("relative mt-5", className)}>
       {/* Left edge fade */}
       <div
         aria-hidden
@@ -141,7 +157,7 @@ export function ScrollNav({
         aria-label={ariaLabel}
         className="no-scrollbar flex gap-1 overflow-x-auto border-b border-line scroll-smooth"
       >
-        {items.map((s) => renderItem(s, s.id === activeId))}
+        {children ?? items?.map((s) => renderItem?.(s, s.id === activeId))}
       </nav>
     </div>
   );

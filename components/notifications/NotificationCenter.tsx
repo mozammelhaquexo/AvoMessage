@@ -42,6 +42,8 @@ import {
   type IconName,
 } from "@/components/ui";
 import { cn } from "@/components/ui/utils";
+import { ScrollNav } from "@/components/ui/ScrollNav";
+import { DesktopNotificationPrompt } from "./DesktopNotificationSetting";
 import { apiGet, apiPost, ApiError } from "@/lib/api-client";
 import { useInfiniteList, useIntersectionObserver } from "@/lib/hooks";
 import { useNotifications } from "@/lib/realtime/client";
@@ -272,6 +274,8 @@ export function NotificationCenter() {
 
   return (
     <div className="flex flex-col gap-4">
+      <DesktopNotificationPrompt />
+
       {/* Header row */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
@@ -297,15 +301,20 @@ export function NotificationCenter() {
         </Button>
       </div>
 
-      {/* Filters */}
-      <div className="overflow-x-auto no-scrollbar" role="group" aria-label="Filter notifications">
+      {/* Filters — the same scrollable rail the admin and company consoles
+          use, chevrons included. The SegmentedControl keeps its own sliding
+          indicator and is told not to scroll itself (`max-w-none
+          overflow-visible`), so this rail is the single scroller and the edge
+          fades line up with the real overflow. */}
+      <ScrollNav ariaLabel="Filter notifications" className="mt-0">
         <SegmentedControl
           value={filter}
           onValueChange={(v) => setFilter(v as NotificationFilter)}
           options={FILTER_OPTIONS}
           label="Filter notifications"
+          className="max-w-none overflow-visible"
         />
-      </div>
+      </ScrollNav>
 
       {/* List */}
       {list.loading ? (
