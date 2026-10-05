@@ -32,6 +32,7 @@ import { TopBar } from "./TopBar";
 import { RightPanel } from "./RightPanel";
 import { ComposerProvider } from "./composer-context";
 import { PostComposer } from "@/components/posts/PostComposer";
+import { DesktopNotificationBridge } from "@/components/notifications/DesktopNotificationBridge";
 
 interface ConversationListItem {
   id: string;
@@ -202,6 +203,9 @@ function ShellChrome({ children }: { children: ReactNode }) {
         </div>
         <MobileNav notificationUnread={unreadCount} messageUnread={messageUnread} />
         <PostComposer global onPosted={onPostCreated} />
+        {/* Renders nothing; turns realtime events into OS notifications. Must
+            live inside SocketProvider, which AppShell provides. */}
+        <DesktopNotificationBridge />
       </div>
     </ComposerProvider>
   );

@@ -52,8 +52,9 @@
  *     heartbeat rides along every Nth tick rather than owning a second timer.
  *   - Every poll is wrapped: a transient failure must never kill the loop, so
  *     a rejected request is logged and the next tick tries again.
- *   - Nothing polls while the tab is hidden; coming back triggers an
- *     immediate catch-up tick.
+ *   - Nothing heavy polls while the tab is hidden; coming back triggers an
+ *     immediate catch-up tick. Notifications are the exception and keep
+ *     polling at a reduced cadence — see HIDDEN_NOTIFICATION_EVERY_N_TICKS.
  */
 
 import { ClientToServer, ServerToClient } from './events';
@@ -77,6 +78,22 @@ const LIST_EVERY_N_TICKS = 2;
 const RECEIPTS_EVERY_N_TICKS = 2;
 /** Presence heartbeat, in ticks (10 × 3 s = 30 s, matching the socket beat). */
 const PRESENCE_EVERY_N_TICKS = 10;
+/**
+ * While the tab is hidden, only notifications are polled, and only this often.
+ *
+ * Notifications are the ONE signal whose entire purpose is to reach somebody
+ * who is looking at something else — a hidden tab that reads nothing has no
+ * desktop notification at all (`lib/desktop-notifications.ts` is fed from this
+ * very poll). Everything else — the conversation list, message pages, read
+ * receipts, the presence heartbeat — stays paused, because none of it is
+ * useful to a tab nobody is watching.
+ *
+ * 4 × 3 s = 12 s. Browsers throttle timers in hidden tabs far more
+ * aggressively than this (Chrome clamps to roughly one tick per minute after
+ * five minutes), so the real cadence in the background is worse than the
+ * number here; this is the floor we ask for, not a promise.
+ */
+const HIDDEN_NOTIFICATION_EVERY_N_TICKS = 4;
 const DEFAULT_PRESENCE_STATUS = 'ONLINE';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -248,6 +265,8 @@ export function createPollingSocket(
   let receiptCountdown = 0;
   /** Counts down to the next presence heartbeat. */
   let presenceCountdown = PRESENCE_EVERY_N_TICKS;
+  /** Counts down to the next notification-only poll of a hidden tab. */
+  let hiddenTickCountdown = 0;
   /** Last presence payload the client asked us to publish. */
   let lastPresence: { status?: string } | null = null;
   /** Notification ids already announced. `null` until the first poll seeds it. */
@@ -461,33 +480,49 @@ export function createPollingSocket(
   }
 
   async function runTick(): Promise<void> {
-    // `inFlight` keeps a slow tick from overlapping the next one; `isHidden`
-    // keeps a backgrounded tab from burning requests.
-    if (!connected || inFlight || isHidden()) return;
+    // `inFlight` keeps a slow tick from overlapping the next one.
+    if (!connected || inFlight) return;
+
+    // A hidden tab used to poll NOTHING, which meant it also received no
+    // notifications — and a background tab is precisely when a desktop
+    // notification matters. So the hidden path still runs, but only the
+    // notification read, and only every Nth tick.
+    const hidden = isHidden();
+    if (hidden) {
+      // Counted down BEFORE the test, so the first tick after connect polls
+      // immediately (countdown 0 → -1 → refill) and the next one is
+      // HIDDEN_NOTIFICATION_EVERY_N_TICKS ticks later, rather than one later.
+      hiddenTickCountdown -= 1;
+      if (hiddenTickCountdown > 0) return;
+      hiddenTickCountdown = HIDDEN_NOTIFICATION_EVERY_N_TICKS;
+    }
+
     inFlight = true;
 
     try {
       const jobs: Promise<void>[] = [pollNotifications()];
 
-      if (listCountdown <= 0) {
-        listCountdown = LIST_EVERY_N_TICKS;
-        jobs.push(pollConversationList());
-      }
-      listCountdown -= 1;
+      if (!hidden) {
+        if (listCountdown <= 0) {
+          listCountdown = LIST_EVERY_N_TICKS;
+          jobs.push(pollConversationList());
+        }
+        listCountdown -= 1;
 
-      const withReceipts = receiptCountdown <= 0;
-      if (withReceipts) receiptCountdown = RECEIPTS_EVERY_N_TICKS;
-      receiptCountdown -= 1;
+        const withReceipts = receiptCountdown <= 0;
+        if (withReceipts) receiptCountdown = RECEIPTS_EVERY_N_TICKS;
+        receiptCountdown -= 1;
 
-      for (const conversationId of [...conversations.keys()]) {
-        jobs.push(pollMessages(conversationId));
-        if (withReceipts) jobs.push(pollReceipts(conversationId));
-      }
+        for (const conversationId of [...conversations.keys()]) {
+          jobs.push(pollMessages(conversationId));
+          if (withReceipts) jobs.push(pollReceipts(conversationId));
+        }
 
-      presenceCountdown -= 1;
-      if (presenceCountdown <= 0) {
-        presenceCountdown = PRESENCE_EVERY_N_TICKS;
-        jobs.push(publishPresence(lastPresence ?? {}));
+        presenceCountdown -= 1;
+        if (presenceCountdown <= 0) {
+          presenceCountdown = PRESENCE_EVERY_N_TICKS;
+          jobs.push(publishPresence(lastPresence ?? {}));
+        }
       }
 
       // `allSettled`, not `all`: one failing endpoint must not discard the
@@ -639,6 +674,7 @@ export function createPollingSocket(
     listCountdown = 0;
     receiptCountdown = 0;
     presenceCountdown = PRESENCE_EVERY_N_TICKS;
+    hiddenTickCountdown = 0;
     seenNotifications = null;
     listSnapshot = null;
 

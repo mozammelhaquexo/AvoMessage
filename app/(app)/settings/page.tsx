@@ -37,6 +37,7 @@ import type {
   SessionUser,
 } from "@/lib/api-types";
 import { NotificationPrefRow } from "@/components/notifications/NotificationCenter";
+import { DesktopNotificationSetting } from "@/components/notifications/DesktopNotificationSetting";
 import { ManagerSection } from "@/components/settings/ManagerSection";
 import {
   ACCENT_IDS,
@@ -846,6 +847,8 @@ function NotificationsSection() {
 
   return (
     <div className="flex flex-col gap-4">
+      <DesktopNotificationSetting />
+
       <Card className="p-5">
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">

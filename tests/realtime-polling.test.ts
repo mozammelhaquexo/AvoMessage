@@ -740,7 +740,7 @@ describe('polling transport — unsupported events', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('polling transport — lifecycle', () => {
-  it('polls nothing while the tab is hidden', async () => {
+  it('polls nothing heavy while the tab is hidden, but still reads notifications', async () => {
     const store = createStore();
     const calls: Call[] = [];
     const socket = createPollingSocket({
@@ -753,11 +753,57 @@ describe('polling transport — lifecycle', () => {
     socket.connect();
     await settle();
 
-    // No reads at all. The one POST is the connect-time presence publish,
-    // which is deliberate: a background tab is still a live session, and the
-    // Socket.io path marks its user online on connect regardless of focus.
-    expect(pathsOf(calls, 'GET')).toHaveLength(0);
+    // Exactly one read: the notification inbox. Notifications are the one
+    // signal whose purpose is to reach somebody looking at another window, and
+    // the desktop-notification bridge is fed from this poll — a hidden tab that
+    // read nothing would have no desktop notification at all. The conversation
+    // list, message pages, read receipts and the presence heartbeat stay
+    // paused; none of them is useful to a tab nobody is watching.
+    expect(pathsOf(calls, 'GET')).toEqual(['/api/notifications?limit=20']);
+    // The one POST is the connect-time presence publish, which is deliberate:
+    // a background tab is still a live session, and the Socket.io path marks
+    // its user online on connect regardless of focus.
     expect(pathsOf(calls, 'POST')).toEqual(['/api/presence']);
+  });
+
+  it('throttles the hidden notification poll instead of running every tick', async () => {
+    const store = createStore();
+    const calls: Call[] = [];
+    const tasks = new Map<number, () => void>();
+    let nextTimerId = 1;
+
+    const socket = createPollingSocket({
+      rest: createRest(store, calls),
+      isHidden: () => true,
+      setTimer: (fn: () => void) => {
+        const id = nextTimerId;
+        nextTimerId += 1;
+        tasks.set(id, fn);
+        return id;
+      },
+      clearTimer: (handle: unknown) => tasks.delete(handle as number),
+    });
+
+    const tick = async () => {
+      for (const fn of [...tasks.values()]) fn();
+      await settle();
+    };
+
+    socket.connect();
+    await settle();
+    const afterConnect = pathsOf(calls, 'GET').length;
+
+    // Ticks 1..3 are swallowed by the countdown; the 4th reads again.
+    await tick();
+    await tick();
+    await tick();
+    expect(pathsOf(calls, 'GET').length).toBe(afterConnect);
+
+    await tick();
+    expect(pathsOf(calls, 'GET').length).toBe(afterConnect + 1);
+
+    // And a hidden tab never touches the heavy endpoints.
+    expect(pathsOf(calls, 'GET').every((p) => p.startsWith('/api/notifications'))).toBe(true);
   });
 
   it('stops polling once disconnected', async () => {
