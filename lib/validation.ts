@@ -30,6 +30,38 @@ export const cuidSchema = z.string().min(1, 'Invalid id');
 const emptyToUndefined = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((v) => (v === '' || v === null ? undefined : v), schema.optional());
 
+/**
+ * A reference to an uploaded image: an absolute http(s) URL, or a same-origin
+ * path this app serves.
+ *
+ * The second form is not a convenience — it is the ONLY form the uploader
+ * produces. `POST /api/uploads` answers with
+ * `{ url: "/uploads/avatar/2026/10/<uuid>.png" }`, so a plain
+ * `z.string().url()` rejected every avatar and cover save with "Invalid URL"
+ * the instant the upload succeeded. That made the whole feature look broken
+ * even when the bytes had arrived safely.
+ *
+ * `//host` is refused on purpose: it is protocol-relative, so it reads like a
+ * path while pointing at another origin.
+ */
+const imageRefSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .refine(
+    (v) => {
+      if (v.startsWith('//')) return false;
+      if (v.startsWith('/')) return true;
+      try {
+        const protocol = new URL(v).protocol;
+        return protocol === 'http:' || protocol === 'https:';
+      } catch {
+        return false;
+      }
+    },
+    { message: 'Must be an http(s) URL or a path starting with /' },
+  );
+
 // ─── Auth ───────────────────────────────────────────────────────────────────
 
 export const signupSchema = z.object({
@@ -108,8 +140,9 @@ export const updateProfileSchema = z.object({
   website: emptyToUndefined(z.string().url('Invalid URL').max(2048)),
   location: emptyToUndefined(z.string().max(60)),
   isPrivate: z.boolean().optional(),
-  avatarUrl: emptyToUndefined(z.string().url('Invalid URL').max(2048)),
-  coverUrl: emptyToUndefined(z.string().url('Invalid URL').max(2048)),
+  // Uploaded images, not links a user types — see imageRefSchema.
+  avatarUrl: emptyToUndefined(imageRefSchema),
+  coverUrl: emptyToUndefined(imageRefSchema),
 });
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 
