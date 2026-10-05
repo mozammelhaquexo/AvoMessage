@@ -14,6 +14,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, ConfirmDialog, ErrorState, Icon, Skeleton, toast } from "@/components/ui";
 import { apiDelete, apiGet, ApiError } from "@/lib/api-client";
 import { formatRelative } from "@/lib/chat";
+import { isCompanyManagerRole } from "@/lib/company-roles";
+import { useIsAdmin } from "@/lib/auth-client";
 import type { ManagerApplicationItem, ManagerApplicationStatus } from "@/lib/api-types";
 
 const STATUS_META: Record<
@@ -46,6 +48,7 @@ const STATUS_META: Record<
 };
 
 export function ManagerSection() {
+  const isAdmin = useIsAdmin();
   const [application, setApplication] = useState<ManagerApplicationItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +93,16 @@ export function ManagerSection() {
       setBusy(false);
     }
   }
+
+  /*
+   * An administrator never applies. They already hold the highest platform
+   * role, and the company-creation policy already treats them as the ADMIN
+   * tier — the only thing standing between them and a Manager Panel is a
+   * company, which they create themselves. So the tab shows the one action
+   * that is actually useful instead of a form whose approval would be a
+   * formality ("admin nijei admin abar nijei manager hoy").
+   */
+  if (isAdmin) return <AdminManagerAccess />;
 
   if (loading) {
     return (
@@ -232,6 +245,106 @@ function Field({ label, value }: { label: string; value: string }) {
     <div>
       <dt className="text-caption font-medium text-ink-3">{label}</dt>
       <dd className="text-ink">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * What an administrator sees on Settings → Manager.
+ *
+ * Full access, stated plainly, plus whichever single next step applies: open
+ * the console they already have, or create the company that gives them one.
+ * The application form is not shown at all — an administrator filing a request
+ * for another administrator to approve would be a loop with no purpose, and
+ * the copy says so rather than leaving them to wonder why the tab is empty.
+ */
+function AdminManagerAccess() {
+  const [slug, setSlug] = useState<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<{ company: { slug: string }; role: string }[]>("/api/companies")
+      .then((rows) => {
+        if (cancelled) return;
+        setSlug(rows.find((m) => isCompanyManagerRole(m.role))?.company.slug ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setSlug(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <section className="rounded-lg border border-line bg-surface p-5">
+        <div className="flex items-start gap-3">
+          <span
+            aria-hidden
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400"
+          >
+            <Icon name="shield" size={22} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-h3 font-semibold text-ink">
+              আপনি প্ল্যাটফর্ম অ্যাডমিন — সম্পূর্ণ অ্যাক্সেস আছে
+            </h2>
+            <p className="mt-1.5 text-body-sm leading-relaxed text-ink-2">
+              আপনার ম্যানেজার হওয়ার জন্য আবেদন করার দরকার নেই, এবং কোনো ম্যানেজারের অনুমতিও
+              লাগবে না। আপনি নিজেই আপনার কোম্পানি তৈরি করতে পারবেন — কোম্পানি তৈরি হওয়ার সাথে
+              সাথেই আপনার সাইডবারে Manager Panel চালু হয়ে যাবে।
+            </p>
+            <p className="mt-2 text-caption text-ink-3" lang="en">
+              Platform administrator · full access · no manager approval required
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          {slug === undefined ? (
+            <Skeleton className="h-11 w-52 rounded-lg" />
+          ) : slug ? (
+            <>
+              <Button href={`/manage/${slug}`}>
+                <Icon name="chart" size={16} aria-hidden className="mr-1.5" />
+                Open Manager Panel
+              </Button>
+              <Button href="/companies/new" variant="outline">
+                <Icon name="building" size={16} aria-hidden className="mr-1.5" />
+                Create another company
+              </Button>
+            </>
+          ) : (
+            <Button href="/companies/new">
+              <Icon name="building" size={16} aria-hidden className="mr-1.5" />
+              কোম্পানি তৈরি করুন
+            </Button>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-line bg-surface-2 p-4">
+        <h3 className="flex items-center gap-2 text-body-sm font-semibold text-ink">
+          <Icon name="info" size={16} aria-hidden className="text-ink-3" />
+          Admin panel-এ Manager Section কোথায়?
+        </h3>
+        <p className="mt-2 text-body-sm text-ink-2">
+          Admin panel → <span className="font-medium text-ink">Managers</span> — সেখানে
+          কোম্পানিগুলোর তালিকা আর প্রতিটির ম্যানেজার সংখ্যা দেখতে পাবেন। নতুন আবেদনগুলো
+          <span className="font-medium text-ink"> Applications</span>-এ আসে।
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button href="/admin/managers" variant="outline" size="sm">
+            <Icon name="shield" size={15} aria-hidden className="mr-1.5" />
+            Managers
+          </Button>
+          <Button href="/admin/applications" variant="outline" size="sm">
+            <Icon name="send" size={15} aria-hidden className="mr-1.5" />
+            Applications
+          </Button>
+        </div>
+      </section>
     </div>
   );
 }

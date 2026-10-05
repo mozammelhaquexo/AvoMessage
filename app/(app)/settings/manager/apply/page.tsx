@@ -10,11 +10,12 @@
  */
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useCallback, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Button, FormField, Icon, Input, Textarea, toast } from "@/components/ui";
+import { Button, FormField, Icon, Input, Textarea } from "@/components/ui";
 import { BackLink } from "@/components/layout/AppShell";
+import { ManagerApplySuccess } from "@/components/settings/ManagerApplySuccess";
 import { apiPost, ApiError } from "@/lib/api-client";
 
 interface Values {
@@ -60,6 +61,13 @@ export default function ManagerApplyPage() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  /**
+   * Set once the server has accepted the application. It renders the centred
+   * Bengali confirmation (see ManagerApplySuccess) and is the ONLY thing that
+   * navigates afterwards — the old code pushed to Settings immediately, so the
+   * confirmation and the redirect raced and the message was never read.
+   */
+  const [submitted, setSubmitted] = useState(false);
 
   const errors: Record<keyof Values, string | null> = {
     companyName:
@@ -76,6 +84,11 @@ export default function ManagerApplyPage() {
   const blur = (key: keyof Values) => () => setTouched((t) => ({ ...t, [key]: true }));
 
   const show = (key: keyof Values) => (touched[key] ? errors[key] ?? undefined : undefined);
+
+  /** Where the confirmation sends the applicant once it has been read. */
+  const finish = useCallback(() => {
+    router.push("/settings?tab=manager");
+  }, [router]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -105,12 +118,13 @@ export default function ManagerApplyPage() {
         teamSize: "value" in counts.teamSize ? counts.teamSize.value : 0,
         ...(values.message.trim() ? { message: values.message.trim() } : {}),
       });
-      toast({ variant: "success", title: "Application submitted" });
-      router.push("/settings?tab=manager");
+      setSubmitted(true);
     } catch (err) {
+      // "You already have one under review" is not a failure the applicant
+      // needs to act on — their application IS in, which is exactly what the
+      // confirmation says. Any other error stays on the form.
       if (err instanceof ApiError && err.code === "APPLICATION_PENDING") {
-        toast({ variant: "error", title: "You already have an application under review." });
-        router.push("/settings?tab=manager");
+        setSubmitted(true);
         return;
       }
       setServerError(err instanceof Error ? err.message : "Could not submit your application.");
@@ -121,6 +135,9 @@ export default function ManagerApplyPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
+      {/* Fixed-position overlay, so its place in the tree is irrelevant to
+          layout — it is the first child only so that it reads first. */}
+      <ManagerApplySuccess open={submitted} onDone={finish} />
       <BackLink href="/settings?tab=manager" label="Back to Settings" />
 
       <header>

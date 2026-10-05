@@ -10,19 +10,46 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Avatar, Icon, toPresenceStatus, type IconName } from "@/components/ui";
 import { cn } from "@/components/ui/utils";
 import { useIsAdmin, useSession } from "@/lib/auth-client";
 import { apiGet } from "@/lib/api-client";
 import { isCompanyManagerRole } from "@/lib/company-roles";
-import { usePresence } from "@/lib/realtime/client";
+import { usePresence, useRealtimeEvent } from "@/lib/realtime/client";
+import { ServerToClient, type NotificationPayload } from "@/lib/realtime/events";
 import { formatCount } from "@/lib/format";
 
 interface SidebarProps {
   notificationUnread: number;
   messageUnread: number;
+}
+
+/**
+ * Where the viewer's management console lives.
+ *
+ * `slug` is the company whose console to open; `approved` is "an administrator
+ * has approved this person as a manager" — which is NOT the same thing, and the
+ * difference is the whole point of this type. An approved manager who has not
+ * created their company yet has no slug and no membership row, and under the
+ * old single-fetch version the Manager Panel simply never appeared for them:
+ * approval happened, the notification arrived, and the nav did not change.
+ */
+interface ManagerAccess {
+  slug: string | null;
+  approved: boolean;
+}
+
+/** Routes whose completion can change manager access. */
+const MANAGER_ACCESS_ROOTS = ["manage", "companies", "company", "settings"];
+
+function hasManagerAccess(access: ManagerAccess | null): boolean {
+  return !!access && (access.slug !== null || access.approved);
+}
+
+function managerHref(access: ManagerAccess | null): string {
+  return access?.slug ? `/manage/${access.slug}` : "/manage";
 }
 
 interface NavItem {
@@ -93,7 +120,7 @@ export function Sidebar({ notificationUnread, messageUnread }: SidebarProps) {
   const pathname = usePathname();
   const { user } = useSession();
   const isAdmin = useIsAdmin();
-  const [manageSlug, setManageSlug] = useState<string | null>(null);
+  const [access, setAccess] = useState<ManagerAccess | null>(null);
 
   const username = user?.username ?? "";
 
@@ -102,21 +129,69 @@ export function Sidebar({ notificationUnread, messageUnread }: SidebarProps) {
   const selfPresence = usePresence(user ? [user.id] : []);
   const selfStatus = toPresenceStatus(selfPresence[user?.id ?? ""]?.status);
 
-  // Companies the viewer can manage (owner/manager role) — for the Manager Panel link.
+  /**
+   * Resolve manager access: which company console to open, and whether an
+   * approval exists even without one.
+   *
+   * Two reads rather than one because they answer different questions.
+   * `/api/companies` lists memberships — the slug. `/api/manager-applications`
+   * returns the viewer's own latest application, and an APPROVED one is what
+   * makes somebody a manager before they have a company to manage.
+   */
+  const load = useCallback(async () => {
+    const [memberships, application] = await Promise.all([
+      apiGet<{ company: { slug: string }; role: string }[]>("/api/companies").catch(() => []),
+      apiGet<{ status: string } | null>("/api/manager-applications").catch(() => null),
+    ]);
+    const first = memberships.find((m) => isCompanyManagerRole(m.role));
+    setAccess({
+      slug: first?.company.slug ?? null,
+      approved: application?.status === "APPROVED",
+    });
+  }, []);
+
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setAccess(null);
+      return;
+    }
     let cancelled = false;
-    apiGet<{ company: { slug: string }; role: string }[]>("/api/companies")
-      .then((res) => {
-        if (cancelled) return;
-        const first = res.find((m) => isCompanyManagerRole(m.role));
-        setManageSlug(first?.company.slug ?? null);
-      })
-      .catch(() => undefined);
+    void load().catch(() => {
+      if (!cancelled) setAccess(null);
+    });
     return () => {
       cancelled = true;
     };
-  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.id, load]);
+
+  /**
+   * Live refresh when an administrator approves or declines.
+   *
+   * The applicant is very often sitting on the site when the decision lands,
+   * and "the Manager Panel appears the moment you are approved" only holds if
+   * the nav reacts to the decision instead of to a reload. The notification
+   * for the decision is the signal; it reaches this client over whichever
+   * transport is live (socket or the REST poller in `lib/realtime/polling.ts`).
+   */
+  useRealtimeEvent(ServerToClient.NOTIFICATION_NEW, (payload: NotificationPayload) => {
+    if (payload?.type !== "MANAGER_APPLICATION_DECISION") return;
+    void load().catch(() => undefined);
+  });
+
+  /**
+   * And a refresh on the routes where access can change as a side effect of
+   * something the user just did: creating their company, applying from
+   * Settings, or landing back in a console. Compared through a ref so an
+   * unrelated navigation costs nothing.
+   */
+  const lastRoot = useRef<string | null>(null);
+  useEffect(() => {
+    const root = pathname.split("/")[1] ?? "";
+    if (root === lastRoot.current) return;
+    lastRoot.current = root;
+    if (!MANAGER_ACCESS_ROOTS.includes(root) || !user) return;
+    void load().catch(() => undefined);
+  }, [pathname, user, load]);
 
   const items: NavItem[] = [
     { href: "/home", label: "Home", icon: "home", match: (p) => p === "/home" || p.startsWith("/post/") },
@@ -129,8 +204,8 @@ export function Sidebar({ notificationUnread, messageUnread }: SidebarProps) {
 
   // Privileged panels sit in their own section below a divider: Manager above, Admin below.
   const panelItems: NavItem[] = [
-    ...(manageSlug
-      ? [{ href: `/manage/${manageSlug}`, label: "Manager Panel", icon: "chart" as IconName, match: (p: string) => p.startsWith("/manage/"), accent: "manager" as const }]
+    ...(hasManagerAccess(access)
+      ? [{ href: managerHref(access), label: "Manager Panel", icon: "chart" as IconName, match: (p: string) => p.startsWith("/manage"), accent: "manager" as const }]
       : []),
     ...(isAdmin
       ? [{ href: "/admin", label: "Admin Panel", icon: "shield" as IconName, match: (p: string) => p.startsWith("/admin"), accent: "admin" as const }]
