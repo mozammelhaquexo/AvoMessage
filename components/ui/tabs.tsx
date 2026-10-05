@@ -2,7 +2,9 @@
 
 /**
  * Tabs — accessible tablist with arrow-key navigation.
- * Controlled or uncontrolled. Panels render lazily on first activation.
+ * Controlled or uncontrolled. Panels render lazily on first activation, where
+ * "activation" includes the currently-active panel — see the note in TabPanel
+ * for the deep-linked-tab bug that distinction fixes.
  */
 
 import {
@@ -148,6 +150,34 @@ export function Tabs({
   );
 }
 
+/**
+ * Should this panel be rendered at all?
+ *
+ * Panels render lazily on first activation — but "activation" has to include
+ * the panel that is ALREADY active.
+ *
+ * `visited` only grows through `setActiveId`, which the tab buttons call. A
+ * CONTROLLED `<Tabs>` can be switched from outside it, and Settings does
+ * exactly that: it reads `?tab=` on mount and calls its own `setTab` directly.
+ * That never reaches `setActiveId`, so `visited` stayed `{"profile"}` while
+ * `activeId` was `"manager"` — the tab strip highlighted Manager and the panel
+ * below it rendered nothing until the tab was clicked by hand.
+ *
+ * That is the reported symptom: "Settings section theke manager apply korar por
+ * manager page e kichui show hoy na". The apply page redirects to
+ * `/settings?tab=manager`, and the panel there was blank.
+ *
+ * Extracted and exported so the three cases are reachable from a test without
+ * a DOM — see tests/tabs-deep-link.test.tsx.
+ */
+export function shouldRenderPanel(
+  id: string,
+  activeId: string,
+  visited: ReadonlySet<string>,
+): boolean {
+  return id === activeId || visited.has(id);
+}
+
 export function TabPanel({
   id,
   className,
@@ -159,7 +189,7 @@ export function TabPanel({
 }) {
   const { activeId, baseId, visited } = useTabsContext();
   const selected = id === activeId;
-  if (!visited.has(id)) return null;
+  if (!shouldRenderPanel(id, activeId, visited)) return null;
   return (
     <div
       role="tabpanel"

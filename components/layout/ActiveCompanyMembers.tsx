@@ -85,6 +85,14 @@ const STATUS_RANK: Record<PresenceStatus, number> = {
 export function ActiveCompanyMembers() {
   const { user } = useSession();
   const [rows, setRows] = useState<Row[] | null>(null);
+  /**
+   * How many companies the viewer belongs to. Tracked separately from `rows`
+   * because the two empty cases are NOT the same: "in no company" must hide
+   * the card entirely, while "in a company whose only member is you" is worth
+   * saying out loud — otherwise a brand-new company looks like a broken
+   * feature rather than a quiet one.
+   */
+  const [companyCount, setCompanyCount] = useState(0);
   const [failed, setFailed] = useState(false);
   const [composing, setComposing] = useState<Row | null>(null);
 
@@ -97,6 +105,7 @@ export function ActiveCompanyMembers() {
       try {
         const memberships = await apiGet<Membership[]>("/api/companies");
         const companies = memberships.slice(0, MAX_COMPANIES);
+        if (!cancelled) setCompanyCount(memberships.length);
         if (companies.length === 0) {
           if (!cancelled) setRows([]);
           return;
@@ -164,9 +173,9 @@ export function ActiveCompanyMembers() {
    * "You are not in a company yet" is a Companies-tab message — Mozammel bhai
    * was explicit that Home must never carry it. A card in the rail saying the
    * same thing would be that message wearing a hat, so the whole card is
-   * absent until there is somebody to list.
+   * absent until there is a company to talk about.
    */
-  if (rows !== null && rows.length === 0) return null;
+  if (rows !== null && companyCount === 0) return null;
 
   return (
     <>
@@ -196,7 +205,10 @@ export function ActiveCompanyMembers() {
               ))}
             </div>
           ) : ordered.length === 0 ? (
-            <p className="py-4 text-center text-body-sm text-ink-3">No teammates yet.</p>
+            <p className="py-4 text-center text-body-sm text-ink-3">
+              You&apos;re the only member of your company so far. Teammates appear here
+              as they join.
+            </p>
           ) : (
             ordered.map((row) => (
               <MemberRow
