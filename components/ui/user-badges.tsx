@@ -26,8 +26,22 @@ export interface UserCompanyChip {
   role: CompanyRoleName;
 }
 
+/**
+ * The chip shell, shared by every badge below.
+ *
+ * Sizing note: this used to render at 16px — larger than the 14px author name
+ * it sits next to — because `cn()` was dropping `text-tiny` in favour of the
+ * colour class that follows it. See components/ui/utils.ts for the fix. Now
+ * that `text-tiny` (11px) actually lands, the chip is a real micro-badge:
+ * uppercase + slight tracking so it reads as a label rather than small text,
+ * `leading-none` with a 2px vertical pad so the pill hugs its own text instead
+ * of the inherited 16px line box, and a 10px glyph to match.
+ */
 const CHIP =
-  "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-tiny font-bold leading-4";
+  "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-tiny font-semibold uppercase leading-none tracking-wide";
+
+/** Glyph size inside a chip — kept with the type size above. */
+const CHIP_ICON = 10;
 
 /** True when the platform role carries admin powers (ADMIN or above). */
 export function isAdminRole(role: string | null | undefined): boolean {
@@ -66,7 +80,7 @@ export function RoleBadge({ platformRole, companyRoles, className }: RoleBadgePr
           }
           className={cn(CHIP, "bg-amber-500/15 text-amber-700 dark:text-amber-300", className)}
         >
-          <Icon name="shield" size={11} aria-hidden />
+          <Icon name="shield" size={CHIP_ICON} aria-hidden />
           {platformRole === "SUPER_ADMIN" ? "Super Admin" : "Admin"}
         </span>
       )}
@@ -75,7 +89,7 @@ export function RoleBadge({ platformRole, companyRoles, className }: RoleBadgePr
           title="Company manager"
           className={cn(CHIP, "bg-violet-500/15 text-violet-700 dark:text-violet-300", className)}
         >
-          <Icon name="chart" size={11} aria-hidden />
+          <Icon name="chart" size={CHIP_ICON} aria-hidden />
           Manager
         </span>
       )}
@@ -97,11 +111,14 @@ export function CompanyBadge({ name, role, className }: CompanyBadgeProps) {
       // a legacy OWNER row reads "manager" here too (request 7).
       title={role ? `Member of ${name} (${companyRoleLabel(role).toLowerCase()})` : `Member of ${name}`}
       className={cn(
-        "inline-flex max-w-[13rem] shrink-0 items-center gap-1 rounded-full bg-surface-2 px-1.5 py-px text-tiny font-medium leading-4 text-ink-2",
+        // Same height as the role chips beside it. Not uppercase — this is a
+        // proper noun, and shouting a company name is not the same thing as
+        // labelling a role.
+        "inline-flex max-w-[13rem] shrink-0 items-center gap-1 rounded-full bg-surface-2 px-1.5 py-0.5 text-tiny font-medium leading-none text-ink-2",
         className,
       )}
     >
-      <Icon name="building" size={11} aria-hidden />
+      <Icon name="building" size={CHIP_ICON} aria-hidden />
       <span className="truncate">{name}</span>
     </span>
   );
@@ -143,7 +160,7 @@ export function UserBadges({
             .slice(maxCompanies)
             .map((c) => c.name)
             .join(", ")}
-          className="shrink-0 rounded-full bg-surface-2 px-1.5 py-px text-tiny font-medium leading-4 text-ink-3"
+          className="shrink-0 rounded-full bg-surface-2 px-1.5 py-0.5 text-tiny font-semibold leading-none text-ink-3"
         >
           +{overflow}
         </span>

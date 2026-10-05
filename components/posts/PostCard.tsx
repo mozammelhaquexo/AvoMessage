@@ -303,8 +303,12 @@ export function PostCard({
         {/* Media */}
         <MediaGallery media={post.media} />
 
-        {/* Action bar */}
-        <div className="mt-3 flex items-center justify-between border-t border-line pt-1" role="group" aria-label="Post actions">
+        {/* Action bar.
+            Deliberately `justify-start` with a tight gap, not `justify-between`.
+            Five small controls spread edge-to-edge across a 566px bar left
+            76.5px of dead space between every pair (measured on the live site),
+            which reads as five unrelated things rather than one toolbar. */}
+        <div className="mt-3 flex items-center justify-start gap-1 border-t border-line pt-1" role="group" aria-label="Post actions">
           {/* Like */}
           <motion.button
             type="button"
