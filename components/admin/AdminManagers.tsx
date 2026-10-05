@@ -26,7 +26,7 @@ import {
   Select,
   toast,
 } from "@/components/ui";
-import { apiGet, apiPatch } from "@/lib/api-client";
+import { apiDelete, apiGet, apiPatch } from "@/lib/api-client";
 import { formatRelative } from "@/lib/chat";
 import { DataTable } from "@/components/data/DataTable";
 import { SaaSToolbar } from "@/components/console/SaaSToolbar";
@@ -100,6 +100,13 @@ export function AdminManagers() {
   const [activeFilter, setActiveFilter] = useState("");
   const [confirming, setConfirming] = useState<CompanyManagerRow | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * The permanent-removal flow, kept separate from `confirming` so the two
+   * dialogs cannot both claim the same row: deactivation is reversible and
+   * deleting is not, and they must never look like the same decision.
+   */
+  const [deleting, setDeleting] = useState<CompanyManagerRow | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search.trim()), 400);
@@ -150,6 +157,27 @@ export function AdminManagers() {
     } finally {
       setBusy(false);
       setConfirming(null);
+    }
+  }
+
+  /**
+   * Remove the company for good, then drop the row.
+   *
+   * Only offered for an already-deactivated company, and the server enforces
+   * the same rule — so a row that went stale in an open tab gets a clear
+   * refusal rather than deleting something that was reactivated underneath it.
+   */
+  async function removeCompany(c: CompanyManagerRow) {
+    setRemoving(true);
+    try {
+      await apiDelete(`/api/admin/managers/${c.id}`);
+      setRows((prev) => prev.filter((r) => r.id !== c.id));
+      toast({ variant: "success", title: `${c.name} deleted` });
+    } catch (e) {
+      toast({ variant: "error", title: e instanceof Error ? e.message : "Delete failed" });
+    } finally {
+      setRemoving(false);
+      setDeleting(null);
     }
   }
 
@@ -302,6 +330,17 @@ export function AdminManagers() {
             hidden: (c) => c.isActive,
             onSelect: (c) => void setActive(c, true),
           },
+          {
+            // Only on a deactivated row. Deactivating is the reversible step;
+            // this is the one that does not come back, so it is never the
+            // first thing offered for a live company.
+            id: "delete",
+            label: "Delete company",
+            icon: "trash",
+            destructive: true,
+            hidden: (c) => c.isActive,
+            onSelect: (c) => setDeleting(c),
+          },
         ]}
         emptyTitle="No companies found"
         emptyDescription={
@@ -328,6 +367,20 @@ export function AdminManagers() {
         confirming={busy}
         onConfirm={() => {
           if (confirming) void setActive(confirming, false);
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(o) => !o && setDeleting(null)}
+        title={`Delete ${deleting?.name} permanently?`}
+        description="This cannot be undone. The company's memberships, teams and every post filed under it are deleted with it. Its conversations survive, but no longer belong to a company."
+        confirmLabel="Delete permanently"
+        tone="danger"
+        icon="trash"
+        confirming={removing}
+        onConfirm={() => {
+          if (deleting) void removeCompany(deleting);
         }}
       />
     </div>

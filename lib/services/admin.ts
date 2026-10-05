@@ -498,6 +498,75 @@ export async function updateCompanyAdmin(
   return { company: publicCompany(updated) };
 }
 
+/**
+ * Admin-only: remove a company, permanently, along with everything scoped to it.
+ *
+ * ── Why this is not just `db.company.delete` ────────────────────────────────
+ *
+ * The schema cascades from Company to CompanyMember, Team, Post,
+ * CompanyJoinRequest and Invitation, and sets `companyId` to null on
+ * Conversation and ManagerApplication. So a single delete also destroys the
+ * company's memberships, its teams and — the part that actually matters — every
+ * post filed under it. None of that comes back, so the deletion is gated twice:
+ *
+ *   1. **The company must already be deactivated.** `isActive: false` is the
+ *      reversible step, and an admin who has not taken it has not yet decided
+ *      the company should stop existing. It also means a live company cannot be
+ *      destroyed by one misclick, which is the whole risk with a hard delete.
+ *
+ *   2. **The counts are read BEFORE the delete.** Afterwards there is nothing
+ *      left to count, and an audit entry reading "company deleted" without
+ *      saying how much went with it is not an audit entry. The numbers go into
+ *      the log, where they survive the rows.
+ *
+ * Returns the identity of what was removed rather than the removed row — the
+ * row no longer exists, and the admin list needs the id to drop it from the
+ * table.
+ */
+export async function deleteCompanyAdmin(actor: Actor, id: string, ctx: MutationCtx = {}) {
+  assertAdmin(actor);
+
+  const company = await db.company.findUnique({ where: { id } });
+  if (!company) throw new NotFoundError("Company not found");
+
+  if (company.isActive) {
+    throw new ConflictError(
+      "COMPANY_ACTIVE",
+      "Deactivate the company first. Deactivation is reversible; deleting it is not."
+    );
+  }
+
+  // Count first — the cascade is about to remove the evidence.
+  const [memberCount, postCount, teamCount] = await Promise.all([
+    db.companyMember.count({ where: { companyId: id } }),
+    db.post.count({ where: { companyId: id } }),
+    db.team.count({ where: { companyId: id } }),
+  ]);
+
+  await db.company.delete({ where: { id } });
+
+  await writeAuditLog({
+    actorId: actor.id,
+    action: "admin.company_delete",
+    entityType: "company",
+    entityId: id,
+    metadata: {
+      name: company.name,
+      slug: company.slug,
+      memberCount,
+      postCount,
+      teamCount,
+    },
+    ipAddress: ctx.ip,
+  });
+
+  return {
+    deleted: true as const,
+    company: { id: company.id, name: company.name, slug: company.slug },
+    removed: { memberCount, postCount, teamCount },
+  };
+}
+
 // ─── Company managers ───────────────────────────────────────────────────────
 
 /**
