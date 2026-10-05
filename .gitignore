@@ -41,8 +41,17 @@ yarn-error.log*
 next-env.d.ts
 
 # avomessage runtime data (never commit)
+#
+# `storage/` covers the upload dir (STORAGE_LOCAL_DIR defaults to
+# ./storage/uploads). Do NOT add a bare `uploads/` line here: a gitignore
+# pattern with no leading slash matches at EVERY depth, so `uploads/` also
+# swallowed app/api/uploads/ — the upload API itself. Both route files went
+# uncommitted, and because Vercel now deploys from git rather than from a
+# local working tree, every deploy shipped without an upload endpoint:
+# POST /api/uploads returned 404 "Server action not found." and profile and
+# company picture uploads failed with "Request failed (404)".
+# Scope any such pattern to the root: `/uploads/`.
 storage/
-uploads/
 
 # compiled custom-server output (rebuilt via `npm run build:server`)
 /dist-server/
