@@ -388,6 +388,8 @@ export interface ClientMessage extends MessagePayload {
   pending?: boolean;
   failed?: boolean;
   deleted?: boolean;
+  /** The id this client generated for the send; see `messageKey` in lib/chat.ts. */
+  clientId?: string;
 }
 
 interface SendResponse {
@@ -531,6 +533,9 @@ export function useConversation(conversationId: string) {
           height: a.height ?? null,
         })),
         pending: true,
+        // Rides along so the row keeps a stable React key once the server
+        // assigns the real id — see `messageKey` in lib/chat.ts.
+        clientId,
       };
       setMessages((prev) => [...prev, optimistic]);
       socket.emit(
@@ -549,7 +554,10 @@ export function useConversation(conversationId: string) {
             prev.map((m) =>
               m.id === optimistic.id
                 ? res?.ok && res.message
-                  ? { ...res.message }
+                  ? // `clientId` is carried across the swap on purpose: it is
+                    // what keeps the bubble mounted (and its entrance
+                    // animation un-replayed) when the real row arrives.
+                    { ...res.message, clientId }
                   : { ...m, pending: false, failed: true }
                 : m,
             ),

@@ -42,6 +42,7 @@ export function normalizeMessage(m: AnyMessage): ChatMessage {
       pending: c.pending,
       failed: c.failed,
       deleted: c.deleted ?? false,
+      clientId: c.clientId,
     };
   }
   return {
@@ -91,11 +92,50 @@ export function normalizeMessage(m: AnyMessage): ChatMessage {
     pending: (m as { pending?: boolean }).pending,
     failed: (m as { failed?: boolean }).failed,
     deleted: (m as { deleted?: boolean }).deleted ?? false,
+    // An optimistic message carries `author: null`, so it arrives here (the
+    // socket branch) rather than the REST branch. Both branches have to keep
+    // `clientId`, or the stable key disappears exactly when it is needed.
+    clientId: (m as { clientId?: string }).clientId,
   };
 }
 
-/* ── Time formatting ───────────────────────────────────────────────────── */
+/* ── Ownership ─────────────────────────────────────────────────────────── */
 
+/**
+ * Did the viewer send this message?
+ *
+ * Deliberately not `senderId === selfId`. An optimistic message is written
+ * locally before the server has seen it, so its `senderId` is `null` — judging
+ * it by `senderId` alone made the bubble render on the LEFT for the moment
+ * before the reply arrived and then jump to the right when the persisted row
+ * replaced it. That jump is the bug being fixed here.
+ *
+ * `pending` is set in exactly one place — `useConversation.sendMessage`, on the
+ * message this client just composed — so it is proof of ownership by itself.
+ * The `senderId` comparison is kept for everything else, unchanged.
+ */
+export function isOwnMessage(
+  message: Pick<ChatMessage, "senderId" | "pending">,
+  selfId: string | null | undefined,
+): boolean {
+  if (message.pending) return true;
+  return message.senderId === selfId;
+}
+
+/**
+ * The React key for a message row.
+ *
+ * Stable across the optimistic → persisted swap: the server assigns a new `id`
+ * but the client's own `clientId` rides along, so keying on it turns the swap
+ * into an update instead of a remount. Keyed on `id`, React unmounted and
+ * remounted the bubble, replaying the entrance animation — the second half of
+ * the "message jumps" report.
+ */
+export function messageKey(message: Pick<ChatMessage, "id" | "clientId">): string {
+  return message.clientId ?? message.id;
+}
+
+/* ── Time formatting ───────────────────────────────────────────────────── */
 export function formatMessageTime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });

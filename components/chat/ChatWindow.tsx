@@ -45,6 +45,8 @@ import {
   conversationDisplayName,
   dayKey,
   formatDayLabel,
+  isOwnMessage,
+  messageKey,
   normalizeMessage,
 } from "@/lib/chat";
 import type {
@@ -561,7 +563,7 @@ export function ChatWindow({ conversationId }: { conversationId: string }) {
               const dimmed =
                 searchQuery.trim() !== "" && !m.body?.toLowerCase().includes(searchQuery.trim().toLowerCase());
               return (
-                <div key={m.id}>
+                <div key={messageKey(m)}>
                   {divider && (
                     <div className="my-4 flex items-center gap-3" role="separator" aria-label={formatDayLabel(m.createdAt)}>
                       <span className="h-px flex-1 bg-line" aria-hidden />
@@ -574,11 +576,18 @@ export function ChatWindow({ conversationId }: { conversationId: string }) {
                   <div className={cn(dimmed && "opacity-30")}>
                     <MessageBubble
                       message={m}
-                      own={m.senderId === selfId}
+                      own={isOwnMessage(m, selfId)}
                       showSender={isGroup}
                       grouped={grouped}
-                      isNew={liveIds.has(m.id)}
-                      receipt={m.senderId === selfId ? receiptFor(m) : undefined}
+                      /*
+                       * Our own optimistic message is new too. `liveIds` only
+                       * knows server ids, and a pending row's id is
+                       * `pending:<uuid>`, so without the second clause the
+                       * message you just sent appeared with no entrance at all
+                       * while everybody else's animated in.
+                       */
+                      isNew={liveIds.has(m.id) || !!m.pending}
+                      receipt={isOwnMessage(m, selfId) ? receiptFor(m) : undefined}
                       onReply={setReplyTo}
                       onForward={setForwarding}
                       onRetry={handleRetry}

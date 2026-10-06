@@ -112,6 +112,17 @@ export interface ChatMessage {
   pending?: boolean;
   failed?: boolean;
   deleted?: boolean;
+  /**
+   * The id this client generated for an optimistic send, kept after the server
+   * assigns the real `id`.
+   *
+   * It exists to be a STABLE React key across the optimistic → persisted swap.
+   * Keyed on `id`, that swap unmounts one element and mounts another, so the
+   * entrance animation played a second time and the bubble appeared to jump.
+   * `clientId` is the same string on both sides of the swap, so the swap is an
+   * update and the animation runs exactly once.
+   */
+  clientId?: string;
 }
 
 export interface ConversationView {
