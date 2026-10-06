@@ -517,7 +517,26 @@ export function createPollingSocket(
           jobs.push(pollMessages(conversationId));
           if (withReceipts) jobs.push(pollReceipts(conversationId));
         }
+      }
 
+      /*
+       * Presence is the ONE thing that keeps beating while hidden.
+       *
+       * A hidden tab is still an open session, so it must not go stale — and
+       * the read path reports a stale `lastSeenAt` as OFFLINE (see
+       * `app/api/presence/route.ts`). Without this, closing a tab and merely
+       * backgrounding one would look identical, and the second would be wrong.
+       *
+       * While hidden it beats on EVERY tick rather than every
+       * PRESENCE_EVERY_N_TICKS, because browsers throttle a hidden tab's timers
+       * to roughly one tick a minute: the 3 s cadence that makes a 10-tick
+       * countdown a 30 s heartbeat stretches to about ten minutes in the
+       * background. One beat per tick keeps the worst case near a minute, which
+       * is what the staleness window is sized against.
+       */
+      if (hidden) {
+        jobs.push(publishPresence(lastPresence ?? {}));
+      } else {
         presenceCountdown -= 1;
         if (presenceCountdown <= 0) {
           presenceCountdown = PRESENCE_EVERY_N_TICKS;

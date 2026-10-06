@@ -757,13 +757,20 @@ describe('polling transport — lifecycle', () => {
     // signal whose purpose is to reach somebody looking at another window, and
     // the desktop-notification bridge is fed from this poll — a hidden tab that
     // read nothing would have no desktop notification at all. The conversation
-    // list, message pages, read receipts and the presence heartbeat stay
-    // paused; none of them is useful to a tab nobody is watching.
+    // list, message pages and read receipts stay paused; none of them is useful
+    // to a tab nobody is watching.
     expect(pathsOf(calls, 'GET')).toEqual(['/api/notifications?limit=20']);
-    // The one POST is the connect-time presence publish, which is deliberate:
-    // a background tab is still a live session, and the Socket.io path marks
-    // its user online on connect regardless of focus.
-    expect(pathsOf(calls, 'POST')).toEqual(['/api/presence']);
+
+    // Two presence publishes, and BOTH are deliberate. One on connect (a
+    // background tab is still a live session), and one more on the tick —
+    // because presence is the single thing that must not go quiet while hidden.
+    //
+    // `GET /api/presence` reports a stale `lastSeenAt` as OFFLINE, so a hidden
+    // tab that stopped beating would be indistinguishable from a closed one.
+    // The heartbeat therefore continues, on every tick rather than every tenth,
+    // because the browser throttles a hidden tab's timers to about one tick a
+    // minute — ten ticks would be a ten-minute gap.
+    expect(pathsOf(calls, 'POST')).toEqual(['/api/presence', '/api/presence']);
   });
 
   it('throttles the hidden notification poll instead of running every tick', async () => {

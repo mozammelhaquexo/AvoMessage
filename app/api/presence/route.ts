@@ -24,6 +24,25 @@ import type { PresencePayload } from '@/lib/realtime/events';
  */
 const MAX_IDS = 100;
 
+/**
+ * How long a `lastSeenAt` is still worth believing.
+ *
+ * This is the answer to "why is he still green when he closed the tab hours
+ * ago". Nothing writes OFFLINE when a browser goes away — on the polling
+ * transport there is no socket disconnect to hang that off, and the socket
+ * server's own disconnect grace (`lib/realtime/server.ts`) only runs where a
+ * socket server runs at all. So OFFLINE has to be INFERRED, and the only
+ * evidence available is that the beats stopped.
+ *
+ * Sized against the heartbeat, not guessed: a visible tab beats every 30 s and
+ * a hidden one every tick (see `PRESENCE_EVERY_N_TICKS` and the hidden branch
+ * in `lib/realtime/polling.ts`), with browsers clamping a hidden tab to roughly
+ * one tick a minute. Two minutes therefore leaves at least 2x headroom for an
+ * OPEN background tab while still clearing a closed one quickly — the failure
+ * that matters is a false ONLINE, so the window errs tight rather than loose.
+ */
+const PRESENCE_STALE_MS = 2 * 60_000;
+
 export const GET = handle(async (req: NextRequest): Promise<NextResponse> => {
   await requireSession(req);
 
@@ -48,12 +67,19 @@ export const GET = handle(async (req: NextRequest): Promise<NextResponse> => {
     rows.map((row: { userId: string; status: string; lastSeenAt: Date }) => [row.userId, row]),
   );
 
+  const now = Date.now();
+
   const items: PresencePayload[] = ids.map((userId) => {
     const row = byId.get(userId);
+    const lastSeenAt = row?.lastSeenAt ?? new Date();
+    // No row at all, or a row whose beats stopped, both mean the same thing to
+    // a viewer. The stored status is reported only while it is still backed by
+    // a recent heartbeat.
+    const fresh = row !== undefined && now - lastSeenAt.getTime() < PRESENCE_STALE_MS;
     return {
       userId,
-      status: (row?.status ?? 'OFFLINE') as PresencePayload['status'],
-      lastSeenAt: (row?.lastSeenAt ?? new Date()).toISOString(),
+      status: (fresh ? row.status : 'OFFLINE') as PresencePayload['status'],
+      lastSeenAt: lastSeenAt.toISOString(),
     };
   });
 
