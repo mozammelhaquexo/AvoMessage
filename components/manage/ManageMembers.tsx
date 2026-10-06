@@ -32,11 +32,16 @@ import {
   Input,
   LoadingState,
   Select,
+  Skeleton,
   toast,
+  toPresenceStatus,
+  type PresenceStatus,
 } from "@/components/ui";
 import { OtpStep } from "@/components/auth/otp-step";
-import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api-client";
+import { cn } from "@/components/ui/utils";
+import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-client";
+import { usePresence } from "@/lib/realtime/client";
 import { companyRoleBadgeVariant, companyRoleLabel, isCompanyManagerRole } from "@/lib/company-roles";
 import { formatRelative } from "@/lib/chat";
 import { otpErrorMessage, type OtpChallenge } from "@/lib/otp-client";
@@ -55,6 +60,7 @@ export function ManageMembers() {
   const [query, setQuery] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
   const [removing, setRemoving] = useState<CompanyMemberView | null>(null);
   const [removingBusy, setRemovingBusy] = useState(false);
 
@@ -86,6 +92,16 @@ export function ManageMembers() {
 
   /** Legacy OWNER rows only; used to protect the last one from removal. */
   const ownerCount = useMemo(() => members.filter((m) => m.role === "OWNER").length, [members]);
+
+  /**
+   * Who is already in the company.
+   *
+   * The find-a-user dialog marks these "Already a member" rather than offering
+   * an Add button the server would reject with `ALREADY_MEMBER`. The server
+   * stays the authority — this only saves a pointless round-trip and a
+   * pointless error message.
+   */
+  const memberIds = useMemo(() => new Set(members.map((m) => m.user.id)), [members]);
 
   /**
    * Demote a manager back to MEMBER. There is no promotion counterpart: the
@@ -158,9 +174,13 @@ export function ManageMembers() {
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search members" aria-label="Search members" className="pl-9" />
         </div>
         <div className="ml-auto flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setFindOpen(true)}>
+            <Icon name="search" size={15} aria-hidden className="mr-1.5" />
+            Add existing user
+          </Button>
           <Button size="sm" variant="outline" onClick={() => setAccountOpen(true)}>
             <Icon name="user" size={15} aria-hidden className="mr-1.5" />
-            Add member
+            Create account
           </Button>
           <Button size="sm" onClick={() => setInviteOpen(true)}>
             <Icon name="send" size={15} aria-hidden className="mr-1.5" />
@@ -247,6 +267,17 @@ export function ManageMembers() {
       )}
 
       <InviteDialog open={inviteOpen} onClose={() => setInviteOpen(false)} companyId={companyId} />
+      <FindMemberDialog
+        open={findOpen}
+        onClose={() => setFindOpen(false)}
+        companyId={companyId}
+        companyName={detail.company.name}
+        existingIds={memberIds}
+        onAdded={() => {
+          void load();
+          refresh();
+        }}
+      />
       <AddMemberDialog
         open={accountOpen}
         onClose={() => setAccountOpen(false)}
@@ -496,3 +527,267 @@ function AddMemberDialog({
 
 /* Re-exported for the invitations page to share the invite dialog. */
 export { InviteDialog };
+
+/* ── Add an EXISTING user (username search) ─────────────────────────────── */
+
+/** Debounce before hitting the search endpoint. Long enough to skip a
+ *  keystroke, short enough that the list feels live. */
+const SEARCH_DEBOUNCE_MS = 280;
+const RESULT_LIMIT = 8;
+
+interface FoundUser {
+  id: string;
+  name: string;
+  username: string;
+  avatarUrl: string | null;
+  bio: string | null;
+  isVerified: boolean;
+}
+
+/**
+ * Find somebody who already has an AvoMessage account and put them in this
+ * company.
+ *
+ * This is the third way to add a member, and it is deliberately NOT a
+ * replacement for the other two — the three answer different questions:
+ *
+ *   - **Invite by email** — they may not have an account yet; they get a link.
+ *   - **Create account** — they have nothing; the manager types their details
+ *     and the OTP goes to the member's own address.
+ *   - **Add existing user** (this) — they are already on AvoMessage and the
+ *     manager knows their handle. No email, no code, no new account.
+ *
+ * It reuses what already exists rather than growing a parallel stack:
+ * `GET /api/search?type=users` for the lookup (already permission-filtered —
+ * suspended and deleted accounts are excluded at the query) and
+ * `POST /api/companies/:id/members` for the write, which is the same endpoint
+ * the invite flow and the tests drive. Duplicate and cap handling live in
+ * `addMember`, so nothing is re-implemented here.
+ */
+function FindMemberDialog({
+  open,
+  onClose,
+  companyId,
+  companyName,
+  existingIds,
+  onAdded,
+}: {
+  open: boolean;
+  onClose: () => void;
+  companyId: string;
+  companyName: string;
+  existingIds: ReadonlySet<string>;
+  onAdded: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [results, setResults] = useState<FoundUser[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  /** Ids added in this session, so the row can confirm without a refetch. */
+  const [added, setAdded] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (open) {
+      setQuery("");
+      setDebounced("");
+      setResults(null);
+      setError(null);
+      setAdded(new Set());
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  useEffect(() => {
+    if (!open || !debounced) {
+      setResults(null);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    setError(null);
+
+    apiGet<{ data: FoundUser[] }>("/api/search", {
+      params: { q: debounced, type: "users", limit: RESULT_LIMIT },
+    })
+      .then((res) => {
+        if (!cancelled) setResults(res.data ?? []);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setResults([]);
+        setError(e instanceof Error ? e.message : "Search failed. Try again.");
+      })
+      .finally(() => {
+        if (!cancelled) setSearching(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, debounced]);
+
+  const ids = useMemo(() => (results ?? []).map((u) => u.id), [results]);
+  const presence = usePresence(ids);
+
+  async function add(user: FoundUser) {
+    setAdding(user.id);
+    setError(null);
+    try {
+      await apiPost(`/api/companies/${companyId}/members`, {
+        userId: user.id,
+        // Always MEMBER: a manager cannot hand out the Manager role.
+        role: "MEMBER",
+      });
+      setAdded((prev) => new Set(prev).add(user.id));
+      toast({ variant: "success", title: `${user.name} joined ${companyName}` });
+      onAdded();
+    } catch (e) {
+      // The server is the authority on both of these; surface its wording
+      // rather than inventing a parallel vocabulary for the same refusals.
+      setError(
+        e instanceof ApiError && e.code === "ALREADY_MEMBER"
+          ? `${user.name} is already a member of ${companyName}.`
+          : e instanceof Error
+            ? e.message
+            : "Could not add this user.",
+      );
+    } finally {
+      setAdding(null);
+    }
+  }
+
+  const trimmed = query.trim();
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()} title="Add an existing user" size="md">
+      <div className="flex flex-col gap-3">
+        <div className="relative">
+          <Icon
+            name="search"
+            size={16}
+            aria-hidden
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3"
+          />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by username or name…"
+            aria-label="Search users by username"
+            className="pl-9"
+            autoFocus
+          />
+        </div>
+
+        <p className="text-caption text-ink-3">
+          They already have an AvoMessage account — no invitation and no code needed.
+        </p>
+
+        <div className="max-h-80 min-h-24 overflow-y-auto rounded-lg border border-line">
+          {!trimmed ? (
+            <p className="px-3 py-6 text-center text-body-sm text-ink-3">
+              Start typing a username to find someone.
+            </p>
+          ) : searching && results === null ? (
+            <div className="flex flex-col gap-3 p-3" aria-hidden>
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <Skeleton className="h-10 w-10 shrink-0 rounded-full" />
+                  <div className="flex-1">
+                    <Skeleton className="h-3.5 w-1/2 rounded" />
+                    <Skeleton className="mt-1.5 h-3 w-1/3 rounded" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : results !== null && results.length === 0 ? (
+            <p className="px-3 py-6 text-center text-body-sm text-ink-3">
+              No user found for &ldquo;{trimmed}&rdquo;. Check the spelling — a username has no
+              spaces.
+            </p>
+          ) : (
+            <ul className="flex flex-col">
+              {(results ?? []).map((u) => {
+                const isMember = existingIds.has(u.id) || added.has(u.id);
+                const status = toPresenceStatus(presence[u.id]?.status);
+                return (
+                  <li
+                    key={u.id}
+                    className="flex items-center gap-3 border-b border-line px-3 py-2.5 last:border-b-0"
+                  >
+                    <Avatar src={u.avatarUrl} name={u.name} size="md" status={status} />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-body-sm font-semibold text-ink">{u.name}</span>
+                        {u.isVerified && (
+                          <Icon name="check" size={13} aria-label="Verified" className="shrink-0 text-brand" />
+                        )}
+                      </span>
+                      <span className="block truncate text-caption text-ink-3">@{u.username}</span>
+                    </span>
+                    <StatusPill status={status} />
+                    {isMember ? (
+                      <span className="shrink-0 text-caption font-medium text-ink-3">
+                        {added.has(u.id) ? "Added" : "Already a member"}
+                      </span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        loading={adding === u.id}
+                        disabled={adding !== null}
+                        onClick={() => void add(u)}
+                      >
+                        Add
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {error && (
+          <p role="alert" className="text-body-sm text-danger-strong">
+            {error}
+          </p>
+        )}
+
+        <div className="flex justify-end">
+          <Button variant="outline" onClick={onClose}>
+            Done
+          </Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/** Online/offline/away as a word — the avatar carries the dot, this carries
+ *  the meaning, so the row is not colour-only. */
+function StatusPill({ status }: { status: PresenceStatus }) {
+  const label =
+    status === "online" ? "Online" : status === "away" ? "Away" : status === "dnd" ? "Busy" : "Offline";
+  return (
+    <span
+      className={cn(
+        "hidden shrink-0 items-center gap-1.5 text-caption sm:flex",
+        status === "online" ? "text-success-strong" : "text-ink-3",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "h-1.5 w-1.5 rounded-full",
+          status === "online" ? "bg-success" : status === "offline" ? "bg-ink-3/40" : "bg-warning",
+        )}
+      />
+      {label}
+    </span>
+  );
+}
