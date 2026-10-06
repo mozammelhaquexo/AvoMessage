@@ -188,6 +188,58 @@ function base64Body(value: string): string {
   return (b64.match(/.{1,76}/g) ?? [b64]).join('\r\n');
 }
 
+/**
+ * The DATA payload for the SMTP driver.
+ *
+ * Pure and exported so the header/part structure can be asserted without
+ * opening a socket — which matters, because the structure is the part that
+ * keeps going wrong. It previously sent `Content-Type: text/html` alone and
+ * dropped `opts.text` entirely, on the one path whose own template
+ * documentation warns that "some spam filters treat a missing text part as a
+ * signal". Resend got the text part; SMTP silently discarded it.
+ *
+ * ── Why multipart/alternative, and why the text part is FIRST ─────────────
+ *
+ * RFC 2046 defines the alternatives as least-preferred to most-preferred, so a
+ * client renders the LAST part it can handle. Text first means a text-only
+ * client shows the message and an HTML client still gets the designed email;
+ * HTML first would make text-only clients display raw markup.
+ *
+ * Headers must be 7-bit: the subject and the display name are RFC 2047
+ * encoded, and both bodies are base64 so Bengali survives intact. Base64 also
+ * makes dot-stuffing impossible — a raw line starting with "." would otherwise
+ * be read as the end-of-data marker.
+ */
+export function buildSmtpMessage(
+  opts: SendMailOptions,
+  ctx: { from: string; replyTo: string; date: string; messageId: string; boundary: string },
+): string {
+  return [
+    `From: ${encodeFromHeader(ctx.from)}`,
+    `Reply-To: ${ctx.replyTo}`,
+    `To: ${opts.to}`,
+    `Subject: ${encodeHeaderValue(opts.subject)}`,
+    `Date: ${ctx.date}`,
+    `Message-ID: ${ctx.messageId}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: multipart/alternative; boundary="${ctx.boundary}"`,
+    ``,
+    `--${ctx.boundary}`,
+    `Content-Type: text/plain; charset=utf-8`,
+    `Content-Transfer-Encoding: base64`,
+    ``,
+    base64Body(opts.text),
+    `--${ctx.boundary}`,
+    `Content-Type: text/html; charset=utf-8`,
+    `Content-Transfer-Encoding: base64`,
+    ``,
+    base64Body(opts.html),
+    `--${ctx.boundary}--`,
+    `.`,
+    ``,
+  ].join('\r\n');
+}
+
 /** Dev driver: console + ./storage/mail/<ts>-<tag>.html for inspection. */
 export class LogMailer implements Mailer {
   async send(opts: SendMailOptions): Promise<void> {
@@ -318,26 +370,17 @@ export class SmtpMailer implements Mailer {
       await cmd(`RCPT TO:<${opts.to}>`, '250');
       await cmd('DATA', '354');
       const date = new Date().toUTCString();
-      // Headers must be 7-bit: the subject and display name are RFC 2047
-      // encoded, and the body is base64 so the Bengali HTML survives intact.
-      // Base64 also makes dot-stuffing impossible — a raw body line starting
-      // with "." would otherwise be read as the end-of-data marker.
       const messageId = `<${randomUUID()}@${bareAddress(this.from).split('@')[1] ?? 'avomessage'}>`;
+      const boundary = `avo-${randomUUID()}`;
+      /*
+       * Reply-To is configurable because a no-reply sender with no way back is
+       * itself a mild spam signal — receivers like a route for a human. It
+       * defaults to the envelope address rather than being omitted, so the
+       * header is always present and always valid.
+       */
+      const replyTo = process.env.SMTP_REPLY_TO?.trim() || bareAddress(this.from);
       io.write(
-        [
-          `From: ${encodeFromHeader(this.from)}`,
-          `To: ${opts.to}`,
-          `Subject: ${encodeHeaderValue(opts.subject)}`,
-          `Date: ${date}`,
-          `Message-ID: ${messageId}`,
-          `MIME-Version: 1.0`,
-          `Content-Type: text/html; charset=utf-8`,
-          `Content-Transfer-Encoding: base64`,
-          ``,
-          base64Body(opts.html),
-          `.`,
-          ``,
-        ].join('\r\n'),
+        buildSmtpMessage(opts, { from: this.from, replyTo, date, messageId, boundary }),
       );
       await waitFor('250');
       await cmd('QUIT', '221');
