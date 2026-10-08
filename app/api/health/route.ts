@@ -38,6 +38,11 @@ interface DbCheck {
   latencyMs?: number;
   error?: string;
   schema?: { ok: boolean; tableCount?: number; error?: string };
+  /** Row counts of every public user table. A monitoring endpoint can poll
+   *  `/api/health` and alert when any value drops unexpectedly — the cheapest
+   *  way to catch "the database was reset" or "a destructive migration ran"
+   *  without setting up log scraping. */
+  rows?: Record<string, number>;
 }
 
 /**
@@ -80,10 +85,36 @@ async function checkDb(): Promise<DbCheck> {
     // an unqualified probe could succeed or fail purely on the connection's
     // search_path and report a problem that the application does not have.
     await prisma.$queryRaw`SELECT 1 FROM "public"."User" LIMIT 0`;
-    return { ok: true, latencyMs, schema: { ok: true, tableCount } };
   } catch (err) {
     return { ok: false, latencyMs, schema: { ok: false, tableCount, error: describe(err) } };
   }
+
+  // Row counts of every public user table. Cheap (one information_schema
+  // scan + n COUNT(*)) and the cheapest way to alert on a silent wipe —
+  // a monitoring endpoint can poll /api/health and fire when any value drops
+  // unexpectedly.
+  let rows: Record<string, number> | undefined;
+  try {
+    const names = await prisma.$queryRaw<{ table_name: string }[]>`
+      SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+    `;
+    rows = {};
+    for (const { table_name } of names) {
+      // Table name comes from information_schema, not user input — safe
+      // to interpolate. Double-quoted form is the safe shape even for
+      // unusual names.
+      const quoted = `"${table_name.replace(/"/g, '""')}"`;
+      const out = await prisma.$queryRawUnsafe<{ n: number }[]>(
+        `SELECT count(*)::int AS n FROM ${quoted}`,
+      );
+      rows[table_name] = out[0]?.n ?? 0;
+    }
+  } catch {
+    // Best-effort: a row-count probe that fails is not itself a DB-down.
+  }
+
+  return { ok: true, latencyMs, schema: { ok: true, tableCount }, rows };
 }
 
 export async function GET() {

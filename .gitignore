@@ -63,6 +63,12 @@ storage/
 # local archive of removed source files
 /.trash/
 
+# local database backups — written by `node scripts/backup-supabase.mjs`. Holds
+# the full schema and rows of the live database; never commit. If you want a
+# copy in another location for off-site retention, copy the file OUT of this
+# directory (e.g. to S3, Vercel Blob, an external drive) before git-adding.
+/backups/
+
 .vercel
 .env*
 # ...except the template, which holds no secrets and is the only way a fresh

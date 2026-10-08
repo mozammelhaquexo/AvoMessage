@@ -115,6 +115,19 @@ try {
 }
 
 try {
+  // Pre-migration snapshot of every user table's row count. Cheap, but it is
+  // the only forensic trail we get from a Vercel build: a Vercel serverless
+  // function has no persistent disk, so `pg_dump` would land somewhere that
+  // disappears when the function ends. The counts go into Vercel KV (when the
+  // KV env is wired — see /api/admin/backup for the matching writer) so the
+  // operator can answer "what did the database look like at deploy d_xxx?"
+  // after the fact. The KV write is best-effort: if it fails we still apply.
+  const preCounts = await snapshotRowCounts(client);
+  log(`pre-migration row counts: ${formatCounts(preCounts)}`);
+  await persistSnapshotToKv('pre', preCounts).catch((err) =>
+    log(`warn: could not persist pre-migration counts to KV: ${String(err.message).split('\n')[0]}`),
+  );
+
   // One multi-statement simple query, so the whole file applies atomically: a
   // failure rolls everything back instead of leaving a half-built schema.
   await client.query(sql);
@@ -129,6 +142,24 @@ try {
     log('ERROR: the schema applied but the database still reports no tables');
     process.exit(1);
   }
+
+  // Post-migration count check. A non-additive migration is almost certainly
+  // a bug — `supabase.sql` is generated from prisma migrations and uses
+  // IF EXISTS / IF NOT EXISTS throughout, so this should never fire in
+  // practice. When it does, fail the build loudly instead of shipping a
+  // half-populated database.
+  const postCounts = await snapshotRowCounts(client);
+  await persistSnapshotToKv('post', postCounts).catch((err) =>
+    log(`warn: could not persist post-migration counts to KV: ${String(err.message).split('\n')[0]}`),
+  );
+  const losses = compareCounts(preCounts, postCounts);
+  if (losses.length > 0) {
+    log(`ERROR: migration reduced row counts on ${losses.length} table(s):`);
+    for (const l of losses) log(`       ${l.table}: ${l.before} -> ${l.after}`);
+    log(`refusing to continue — restore from a snapshot before re-deploying.`);
+    process.exit(1);
+  }
+  log(`post-migration row counts: ${formatCounts(postCounts)}`);
 } catch (err) {
   log(`ERROR: applying ${SQL_FILE} failed — ${err.code ?? '?'}: ${String(err.message).split('\n')[0]}`);
   if (err.position) log(`       at character offset ${err.position}`);
@@ -194,3 +225,71 @@ if (!adminPassword) {
 
 await client.end().catch(() => {});
 log('done');
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Row count of every user table in `public`. The dump is cheap (one
+ * information_schema scan, n COUNT(*) queries) and the only forensic trail
+ * we keep from a Vercel build (no persistent disk, no `pg_dump` binary).
+ */
+async function snapshotRowCounts(client) {
+  const { rows: tables } = await client.query(
+    `SELECT table_name AS name
+       FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`,
+  );
+  const out = {};
+  for (const { name } of tables) {
+    // The table_name comes from information_schema and is therefore a
+    // literal; double-quoting is the safe form even if the name is unusual.
+    const { rows: countRows } = await client.query(
+      `SELECT count(*)::int AS n FROM "${name}"`,
+    );
+    out[name] = countRows[0].n;
+  }
+  return out;
+}
+
+function compareCounts(before, after) {
+  const losses = [];
+  for (const [table, beforeN] of Object.entries(before)) {
+    const afterN = after[table];
+    if (afterN === undefined) {
+      losses.push({ table, before: beforeN, after: 'missing' });
+      continue;
+    }
+    if (afterN < beforeN) {
+      losses.push({ table, before: beforeN, after: afterN });
+    }
+  }
+  return losses;
+}
+
+function formatCounts(counts) {
+  return Object.entries(counts)
+    .map(([t, n]) => `${t}=${n}`)
+    .join(' ');
+}
+
+/**
+ * Best-effort write of a row-count snapshot to Vercel KV. The schema apply
+ * must not block on this — a build that needs to ship will ship even if the
+ * snapshot fails — but the snapshot has useful forensic value when something
+ * later turns out to be wrong, so we try. The matching reader is the
+ * `/api/admin/backup` route.
+ */
+async function persistSnapshotToKv(phase, counts) {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return; // not configured — silently skip
+  const deployment = process.env.VERCEL_DEPLOYMENT_ID ?? `local-${Date.now()}`;
+  const key = `snapshot:${phase}:${deployment}`;
+  const value = JSON.stringify({ at: new Date().toISOString(), counts });
+  const res = await fetch(`${url}/set/${encodeURIComponent(key)}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+    body: value,
+  });
+  if (!res.ok) throw new Error(`KV ${res.status} ${await res.text()}`);
+}
