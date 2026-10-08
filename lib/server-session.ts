@@ -65,6 +65,17 @@ function isTransientDbError(err: unknown): boolean {
   if (/planLimitReached|account has restrictions/i.test(msg)) return true;
   // Generic Prisma connectivity errors (P1xxx codes are operational).
   if (/^P1[0-9]{3}\b/.test(msg)) return true;
+  // Prisma 7 wraps underlying-driver failures as P2039 (DriverAdapterError).
+  // When the cause is a pool-exhaustion / connection-level failure (which is
+  // what we see in production when Supavisor's session-mode pool fills up
+  // with concurrent serverless invocations), this is also transient.
+  if (/\bP2039\b/.test(msg)) {
+    if (
+      /EMAXCONNSESSION|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i.test(msg)
+    ) {
+      return true;
+    }
+  }
   // node-postgres connection-level failures.
   const code = (err as { code?: string }).code;
   if (
