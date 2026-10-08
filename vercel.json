@@ -1,5 +1,4 @@
 {
-  "//": "Vercel Cron schedule. The 'crons' key is the only part Vercel uses; the rest is documentation. POST /api/admin/backup snapshots every public table to Vercel KV at 02:00 UTC daily — see app/api/admin/backup/route.ts and docs/BACKUP_RUNBOOK.md.",
   "crons": [
     {
       "path": "/api/admin/backup",
