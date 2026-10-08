@@ -54,6 +54,11 @@ import { getDb, setDbOverride, verifyHandshakeSession } from './store.js';
 // module: its `.js`-suffixed imports (required by tsconfig.server.json's
 // nodenext resolution) are unresolvable to Next's bundler. See notify.ts.
 import { setNotificationEmitter, toNotificationPayload } from './notify.js';
+// Notification rows + Web Push for a new message. Shared with the REST path
+// (lib/services/messages.ts) so both transports behave identically and the
+// deployed app — which never runs this file — still notifies. Alias-free, which
+// is why it can be imported here at all.
+import { notifyNewMessage } from '../message-notify.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tunables
@@ -1215,7 +1220,7 @@ async function fanOutConversationUpdate(
   io: Server,
   db: PrismaClientLike,
   conversationId: string,
-  message: { id: string; body: string | null; createdAt: Date },
+  message: { id: string; body: string | null; createdAt: Date; attachments?: { kind: string }[] },
   author: MessageAuthorPayload | null,
   senderId: string,
 ): Promise<void> {
@@ -1248,34 +1253,41 @@ async function fanOutConversationUpdate(
         ...(unreadCount === undefined ? {} : { unreadCount }),
       },
     );
+  }
 
-    if (member.userId === senderId) continue;
-    const live = presence.get(member.userId);
-    const isOnline = !!live && live.sockets.size > 0;
-    // ARCHITECTURE.md §3.2: notify offline/muted members of new messages.
-    if (!isOnline || member.isMuted) {
-      const body = message.body
-        ? message.body.slice(0, 140)
-        : 'Sent an attachment';
-      const notification = await db.notification.create({
-        data: {
-          userId: member.userId,
-          actorId: senderId,
-          type: 'MESSAGE',
-          // The client deep-links a notification by its entity id, and the only
-          // routable id here is the conversation (there is no /messages/<messageId>
-          // route). Storing the message id sent readers to a dead link.
-          entityType: 'conversation',
-          entityId: conversationId,
-          title: 'New message',
-          body,
-        },
-      });
-      io.to(roomUser(member.userId)).emit(
-        ServerToClient.NOTIFICATION_NEW,
-        toNotificationPayload(notification, author),
-      );
-    }
+  /*
+   * Notification rows + Web Push.
+   *
+   * This used to build the notification row inline, and only for members who
+   * were offline or muted. Two problems with that:
+   *
+   *   1. It is the ONLY place that created one, and this file never runs on
+   *      Vercel — so the deployed app produced no message notifications at all.
+   *      The shared implementation in `lib/message-notify.ts` is now called from
+   *      the REST path too (lib/services/messages.ts), which is the path the
+   *      deployment actually uses.
+   *   2. Muting a conversation silenced nothing, because muted members were
+   *      notified. Mute is honoured properly there now.
+   *
+   * The rows come back so they can also be pushed down live sockets — the
+   * polling transport reads them from `GET /api/notifications` instead.
+   */
+  const created = await notifyNewMessage(db, {
+    conversationId,
+    senderId,
+    senderName: author?.name ?? 'Someone',
+    senderAvatarUrl: author?.avatarUrl ?? null,
+    messageId: message.id,
+    body: message.body,
+    hasVoice: (message.attachments ?? []).some((a) => a.kind === 'VOICE'),
+    attachmentKinds: (message.attachments ?? []).map((a) => a.kind),
+  });
+
+  for (const item of created) {
+    io.to(roomUser(item.userId)).emit(
+      ServerToClient.NOTIFICATION_NEW,
+      toNotificationPayload(item.notification, author),
+    );
   }
 }
 

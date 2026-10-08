@@ -30,6 +30,7 @@
     "lib/realtime/store.ts",
     "lib/realtime/notify.ts",
     "lib/realtime/server.ts",
+    "lib/message-notify.ts",
     "lib/rate-limit.ts",
     "lib/prisma-types.ts"
   ]

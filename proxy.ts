@@ -62,6 +62,15 @@ function buildCsp(nonce: string): string {
     // 'unsafe-eval' is independent of 'strict-dynamic' — the latter governs
     // which scripts may load, not whether eval() is permitted.
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isProd ? '' : " 'unsafe-eval'"}`,
+    // The service worker (`public/sw.js`) needs this, and it is NOT optional.
+    // `worker-src` falls back to `child-src` and then to `script-src`, and a
+    // `script-src` containing a nonce or hash makes browsers IGNORE its `'self'`
+    // source entirely (that is what 'strict-dynamic' means). Without an explicit
+    // `worker-src`, `navigator.serviceWorker.register('/sw.js')` is refused with
+    // a CSP violation — and a refused service worker is a refused push
+    // notification, which is the whole feature. There is nothing to gain by
+    // nonce-ing a worker: the URL is fixed and same-origin.
+    "worker-src 'self'",
     // Tailwind ships a compiled stylesheet; React sets a few inline styles.
     "style-src 'self' 'unsafe-inline'",
     // Avatars/uploads served from self or S3_PUBLIC_URL, plus data:/blob:

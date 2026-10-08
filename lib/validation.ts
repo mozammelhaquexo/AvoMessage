@@ -528,6 +528,32 @@ export const conversationMuteSchema = z.object({
 });
 export type ConversationMuteInput = z.infer<typeof conversationMuteSchema>;
 
+// ─── Web Push (see lib/services/push.ts) ────────────────────────────────────
+
+/**
+ * Body of `POST /api/push/subscribe`.
+ *
+ * These three values are copied verbatim out of `PushSubscription.toJSON()`
+ * and are opaque to us — the endpoint is a URL issued by the browser's push
+ * service, and `p256dh`/`auth` are base64url key material. The limits are
+ * generous but real: they exist so a client cannot store megabytes of junk in
+ * a row the fan-out reads on every message.
+ */
+export const pushSubscribeSchema = z.object({
+  endpoint: z.string().trim().min(1).max(1000),
+  keys: z.object({
+    p256dh: z.string().trim().min(1).max(255),
+    auth: z.string().trim().min(1).max(255),
+  }),
+});
+export type PushSubscribeInput = z.infer<typeof pushSubscribeSchema>;
+
+/** Body of `DELETE /api/push/subscribe` — the endpoint to forget. */
+export const pushUnsubscribeSchema = z.object({
+  endpoint: z.string().trim().min(1).max(1000),
+});
+export type PushUnsubscribeInput = z.infer<typeof pushUnsubscribeSchema>;
+
 /**
  * Body of `POST /api/presence`.
  *

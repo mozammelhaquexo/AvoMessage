@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import { requireConversationMember } from "@/lib/permissions";
 import { decodeCursor, encodeCursor, EmailUnverifiedError } from "@/lib/api";
+import { notifyNewMessage } from "@/lib/message-notify";
 import type {
   Actor,
   Message,
@@ -234,6 +235,42 @@ export async function sendMessage(
 
   if (input.clientId && message) {
     rememberIdempotent(conversationId, input.clientId, message.id);
+  }
+
+  /*
+   * Tell the other members.
+   *
+   * THIS IS THE FIX FOR "kono user message korle o notification ashe na".
+   * Notification creation used to live only in `fanOutConversationUpdate`
+   * (lib/realtime/server.ts), and Vercel never runs `server.ts` — it runs Next
+   * route handlers. So on the deployment no MESSAGE notification row was ever
+   * written and no push could ever be sent, regardless of what the client did.
+   * Doing it here means it happens on every host and every transport.
+   *
+   * Awaited rather than fire-and-forget on purpose: a serverless function is
+   * frozen once the response is flushed, so a detached promise would be killed
+   * mid-flight and the notification would be lost intermittently. The cost is
+   * bounded — notification rows are a few indexed inserts, and every push
+   * round trip is capped by SEND_TIMEOUT_MS in lib/message-notify.ts.
+   *
+   * Skipped on an idempotent retry: `message` is only non-null for a real
+   * insert, so a client re-sending the same `clientId` cannot notify twice.
+   */
+  if (message) {
+    await notifyNewMessage(db, {
+      conversationId,
+      senderId: actor.id,
+      senderName: message.sender?.name ?? actor.name,
+      senderAvatarUrl: message.sender?.avatarUrl ?? null,
+      messageId: message.id,
+      body: message.body,
+      hasVoice: Boolean(input.voice) || message.attachments.some((a) => a.kind === "VOICE"),
+      attachmentKinds: message.attachments.map((a) => a.kind),
+    }).catch((err: unknown) => {
+      // A notification is a courtesy on top of a message that is already
+      // committed — never turn it into a failed send.
+      console.error("[messages] notification fan-out failed", err);
+    });
   }
 
   return {

@@ -12,7 +12,7 @@
 --
 -- WHAT IT DOES
 --   1. Creates every enum, table, index, primary key and foreign key the app
---      needs (4 migrations, 185 statements).
+--      needs (5 migrations, 194 statements).
 --   2. Every statement is guarded, so a second run is a no-op instead of an error.
 --   3. Records the Prisma migration bookkeeping rows in "_prisma_migrations"
 --      with the exact checksums Prisma expects, so a later
@@ -1775,6 +1775,97 @@ CREATE INDEX IF NOT EXISTS "OtpChallenge_email_purpose_createdAt_idx" ON "OtpCha
 CREATE INDEX IF NOT EXISTS "OtpChallenge_expiresAt_idx" ON "OtpChallenge"("expiresAt");
 
 
+-- -----------------------------------------------------------------------------
+-- migration 20261008060000_add_push_nicknames  (9 statements)
+-- checksum 90c759022bb17e2954ac353ac34aedced2e712613d346ab262174ada3603dcf0
+-- -----------------------------------------------------------------------------
+
+-- Web Push endpoints, per-group nicknames and private contact nicknames.
+--
+-- Three features, one migration because they ship in one deploy:
+--
+--   1. "PushSubscription" — the only way a notification can reach a user whose
+--      tab is closed. See the model comment in prisma/schema.prisma.
+--   2. "ConversationMember"."nickname" — a member's own label inside one
+--      conversation. Nullable, so every existing row already means "no
+--      nickname, use my real name" and no backfill is needed.
+--   3. "ContactNickname" — the private, per-viewer rename of another user.
+
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "PushSubscription" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "endpoint" VARCHAR(1000) NOT NULL,
+    "p256dh" VARCHAR(255) NOT NULL,
+    "auth" VARCHAR(255) NOT NULL,
+    "userAgent" VARCHAR(500),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "lastUsedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "failureCount" INTEGER NOT NULL DEFAULT 0,
+
+    CONSTRAINT "PushSubscription_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "ContactNickname" (
+    "ownerId" TEXT NOT NULL,
+    "targetId" TEXT NOT NULL,
+    "nickname" VARCHAR(60) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ContactNickname_pkey" PRIMARY KEY ("ownerId","targetId")
+);
+
+-- AlterTable
+ALTER TABLE "ConversationMember" ADD COLUMN IF NOT EXISTS "nickname" VARCHAR(60);
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "PushSubscription_endpoint_key" ON "PushSubscription"("endpoint");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "PushSubscription_userId_idx" ON "PushSubscription"("userId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "ContactNickname_targetId_idx" ON "ContactNickname"("targetId");
+
+DO $avo$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'PushSubscription_userId_fkey' AND conrelid = '"PushSubscription"'::regclass
+  ) THEN
+    -- AddForeignKey
+    ALTER TABLE "PushSubscription" ADD CONSTRAINT "PushSubscription_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$avo$;
+
+DO $avo$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ContactNickname_ownerId_fkey' AND conrelid = '"ContactNickname"'::regclass
+  ) THEN
+    -- AddForeignKey
+    ALTER TABLE "ContactNickname" ADD CONSTRAINT "ContactNickname_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$avo$;
+
+DO $avo$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ContactNickname_targetId_fkey' AND conrelid = '"ContactNickname"'::regclass
+  ) THEN
+    -- AddForeignKey
+    ALTER TABLE "ContactNickname" ADD CONSTRAINT "ContactNickname_targetId_fkey" FOREIGN KEY ("targetId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$avo$;
+
+
 -- =============================================================================
 -- Prisma migration bookkeeping
 -- =============================================================================
@@ -1830,6 +1921,14 @@ WHERE NOT EXISTS (
 );
 
 
+INSERT INTO "_prisma_migrations"
+    ("id", "checksum", "finished_at", "migration_name", "logs", "rolled_back_at", "started_at", "applied_steps_count")
+SELECT gen_random_uuid()::text, '90c759022bb17e2954ac353ac34aedced2e712613d346ab262174ada3603dcf0', now(), '20261008060000_add_push_nicknames', NULL, NULL, now(), 1
+WHERE NOT EXISTS (
+    SELECT 1 FROM "_prisma_migrations" WHERE "migration_name" = '20261008060000_add_push_nicknames'
+);
+
+
 -- =============================================================================
 -- Row Level Security
 -- =============================================================================
@@ -1861,8 +1960,8 @@ $avo$;
 
 -- =============================================================================
 -- Sanity check - the last result set is what the SQL Editor displays.
--- Expect: tables = 39 (38 app tables + _prisma_migrations), enums = 20,
---         foreign_keys = 64, migrations = 4,
+-- Expect: tables = 41 (40 app tables + _prisma_migrations), enums = 20,
+--         foreign_keys = 64, migrations = 5,
 --         tables_without_rls = 0
 -- =============================================================================
 

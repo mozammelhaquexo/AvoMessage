@@ -31,6 +31,61 @@ import {
   subscribeDesktopNotifications,
   type DesktopPermission,
 } from "@/lib/desktop-notifications";
+import {
+  ensureSubscription,
+  pushSupported,
+  releaseSubscription,
+  showViaServiceWorker,
+  type PushSetupResult,
+} from "@/lib/push-client";
+
+/**
+ * Turn a push result into the sentence the user needs to read.
+ *
+ * The distinction that matters is "the tab can be closed" versus "only while a
+ * tab is open" — that is the difference the user asked for, and it is the one
+ * thing they cannot discover by trying it.
+ */
+function reportPushResult(result: PushSetupResult): void {
+  switch (result) {
+    case "subscribed":
+      toast({
+        variant: "success",
+        title: "Desktop notifications on",
+        description: "New messages will reach you even when the tab is closed.",
+      });
+      return;
+    case "denied":
+      toast({
+        variant: "warning",
+        title: "Your browser blocked notifications",
+        description: "Allow them for this site, then turn the switch on again.",
+      });
+      return;
+    case "unsupported":
+      toast({
+        variant: "warning",
+        title: "This browser can't notify you with the tab closed",
+        description:
+          "Notifications will still appear while AvoMessage is open in a background tab.",
+      });
+      return;
+    case "disabled":
+      toast({
+        variant: "warning",
+        title: "Push notifications aren't available yet",
+        description:
+          "The server could not produce its push key pair. Notifications still work while a tab is open.",
+      });
+      return;
+    default:
+      toast({
+        variant: "warning",
+        title: "Couldn't set up background notifications",
+        description: "Reload the page and try again.",
+      });
+  }
+}
 
 export function DesktopNotificationSetting() {
   // `useSyncExternalStore` rather than `useState`: the bridge that actually
@@ -63,29 +118,39 @@ export function DesktopNotificationSetting() {
     async (next: boolean) => {
       if (!next) {
         setEnabled(false);
+        // Stop the SERVER sending too. Leaving the subscription behind means
+        // every message still pays for a push nobody will ever see.
+        void releaseSubscription();
         return;
       }
       setAsking(true);
       try {
         const result = await requestPermission();
         setPermission(result);
-        if (result === "granted") {
-          setEnabled(true);
-          toast({
-            variant: "success",
-            title: "Desktop notifications on",
-            description: "You'll be notified when AvoMessage is in the background.",
-          });
-        } else if (result === "denied") {
+        if (result !== "granted") {
           setEnabled(false);
-          toast({
-            variant: "warning",
-            title: "Your browser blocked notifications",
-            description: "Allow them for this site, then turn the switch on again.",
-          });
-        } else if (result === "unsupported") {
-          setEnabled(false);
+          if (result === "denied") {
+            toast({
+              variant: "warning",
+              title: "Your browser blocked notifications",
+              description: "Allow them for this site, then turn the switch on again.",
+            });
+          }
+          return;
         }
+
+        setEnabled(true);
+
+        /*
+         * Permission alone is not enough to be notified with the tab closed.
+         * `new Notification(...)` needs a live document, so the browser also
+         * has to hold a PUSH SUBSCRIPTION the server can send to. This call
+         * registers the service worker and creates one — and it has to happen
+         * HERE, inside the click, because creating a subscription outside a
+         * user gesture is refused.
+         */
+        const push = await ensureSubscription();
+        reportPushResult(push);
       } finally {
         setAsking(false);
       }
@@ -93,7 +158,19 @@ export function DesktopNotificationSetting() {
     [],
   );
 
-  const sendTest = useCallback(() => {
+  const sendTest = useCallback(async () => {
+    // Deliberately the same code path a real message takes — shown from the
+    // SERVICE WORKER, not from this page. A test that exercises a different
+    // mechanism than the real one proves nothing.
+    const viaWorker = await showViaServiceWorker("AvoMessage", {
+      body: "Desktop notifications are working. This is what a new message looks like.",
+      tag: "avo-test",
+      requireInteraction: true,
+    });
+    if (viaWorker) return;
+
+    // No worker (unsupported browser, or registration failed) — fall back to
+    // the page-scoped notification so the button is never a dead end.
     const shown = show(
       {
         title: "AvoMessage",
@@ -124,12 +201,14 @@ export function DesktopNotificationSetting() {
           <p className="mt-0.5 text-caption text-ink-3">
             {denied
               ? "Your browser is blocking notifications for this site. Open the padlock (or the site controls) in the address bar, set Notifications to Allow, then reload this page."
-              : "Shows a Windows notification when a message or alert arrives while AvoMessage is in the background. Nothing pops up while you are looking at the tab."}
+              : pushSupported()
+                ? "New messages pop up on your desktop even when the AvoMessage tab is closed. Nothing pops up while you are looking at the conversation."
+                : "Shows a Windows notification when a message or alert arrives while AvoMessage is open in a background tab. This browser cannot deliver notifications after the tab is closed."}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {granted && enabled && (
-            <Button variant="outline" size="sm" onClick={sendTest}>
+            <Button variant="outline" size="sm" onClick={() => void sendTest()}>
               Send a test
             </Button>
           )}
@@ -171,11 +250,9 @@ export function DesktopNotificationPrompt() {
       setPermission(result);
       if (result === "granted") {
         setEnabled(true);
-        toast({
-          variant: "success",
-          title: "Desktop notifications on",
-          description: "You'll be notified when AvoMessage is in the background.",
-        });
+        // Same gesture, same reason as the Settings switch: the push
+        // subscription can only be created from a user interaction.
+        reportPushResult(await ensureSubscription());
       }
     } finally {
       setAsking(false);
@@ -190,7 +267,7 @@ export function DesktopNotificationPrompt() {
       <p className="min-w-0 flex-1 text-body-sm text-ink">
         <span className="font-semibold">Turn on desktop notifications</span>{" "}
         <span className="text-ink-2">
-          so a new message reaches you even when this tab is in the background.
+          so a new message reaches you even when this tab is closed.
         </span>
       </p>
       <div className="flex shrink-0 items-center gap-2">

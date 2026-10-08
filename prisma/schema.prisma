@@ -236,6 +236,9 @@ model User {
   mentionsReceived    Mention[]
   managerApplications ManagerApplication[] @relation("managerApplicant")
   reviewedManagerApplications ManagerApplication[] @relation("managerApplicationReviewer")
+  pushSubscriptions   PushSubscription[]
+  contactNicknames    ContactNickname[]  @relation("contactNicknameOwner")
+  nicknamedByContacts ContactNickname[]  @relation("contactNicknameTarget")
 
   @@index([username])
   @@index([isActive])
@@ -522,10 +525,42 @@ model ConversationMember {
   role           ConversationRole @default(MEMBER)
   lastReadAt     DateTime         @default(now())
   isMuted        Boolean          @default(false)
+  /**
+   * The member's OWN display name inside this conversation.
+   *
+   * Only this member can set it, and only this member's row carries it, so it
+   * is a self-chosen label rather than a rename of somebody else. In a GROUP it
+   * is how you appear to the rest of the room ("Rakib (Accounts)"); the bubble
+   * and the member list prefer it over `User.name`. NULL means "no nickname —
+   * use my real name", which is also what a cleared nickname returns to.
+   */
+  nickname       String?          @db.VarChar(60)
   joinedAt       DateTime         @default(now())
 
   @@id([conversationId, userId])
   @@index([userId, conversationId])
+}
+
+/**
+ * A private nickname one user gives another — the "Messenger nickname".
+ *
+ * Deliberately NOT a column on `User`: renaming somebody is a statement about
+ * the renamer, not about the renamed. Only `ownerId` sees it, `targetId` is
+ * never told, and two users may call the same person different things. The
+ * composite primary key makes the mapping one-per-pair, so "set a nickname"
+ * is an upsert and "clear it" is a delete.
+ */
+model ContactNickname {
+  ownerId   String
+  owner     User     @relation("contactNicknameOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  targetId  String
+  target    User     @relation("contactNicknameTarget", fields: [targetId], references: [id], onDelete: Cascade)
+  nickname  String   @db.VarChar(60)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([ownerId, targetId])
+  @@index([targetId])
 }
 
 model Message {
@@ -711,6 +746,48 @@ model NotificationPreference {
   calls         Boolean  @default(true)
   security      Boolean  @default(true)
   updatedAt     DateTime @updatedAt
+}
+
+/**
+ * One browser/device push endpoint (Web Push / VAPID).
+ *
+ * WHY THIS TABLE HAS TO EXIST. `lib/desktop-notifications.ts` shows OS
+ * notifications with `new Notification(...)`, which is page JavaScript — close
+ * the tab and there is no JavaScript left to run, so no notification can ever
+ * appear. The only way a browser shows a notification with the tab closed is
+ * the Push API: the site's SERVICE WORKER is woken by the browser's push
+ * service and calls `showNotification()` from there. That requires the server
+ * to hold the endpoint and its keys, which is what this row is.
+ *
+ * `endpoint` is UNIQUE rather than `(userId, endpoint)`: a push endpoint
+ * identifies one browser profile, so re-subscribing the same profile (the
+ * browser rotates keys, the user re-enables the toggle) must UPDATE that row
+ * rather than accumulate dead ones. It also means a shared machine that
+ * changes hands re-points the endpoint at the new account instead of pushing
+ * the old user's messages to whoever is now sitting there.
+ */
+model PushSubscription {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /** The push service URL. Up to ~500 chars in practice; 1000 leaves room. */
+  endpoint     String   @unique @db.VarChar(1000)
+  /** Base64url client public key (`subscription.getKey('p256dh')`). */
+  p256dh       String   @db.VarChar(255)
+  /** Base64url auth secret (`subscription.getKey('auth')`). */
+  auth         String   @db.VarChar(255)
+  /** For the "signed in on these devices" list; never used for routing. */
+  userAgent    String?  @db.VarChar(500)
+  createdAt    DateTime @default(now())
+  lastUsedAt   DateTime @default(now())
+  /**
+   * Consecutive 404/410 responses from the push service. A stale endpoint
+   * answers 410 Gone forever; after a few failures the row is dropped so the
+   * fan-out stops paying for it on every message.
+   */
+  failureCount Int      @default(0)
+
+  @@index([userId])
 }
 
 // ════════════════════════════ COMPANIES & TEAMS ══════════════════════════════

@@ -33,6 +33,7 @@ import { RightPanel } from "./RightPanel";
 import { ComposerProvider } from "./composer-context";
 import { PostComposer } from "@/components/posts/PostComposer";
 import { DesktopNotificationBridge } from "@/components/notifications/DesktopNotificationBridge";
+import { PushSubscriptionBridge } from "@/components/notifications/PushSubscriptionBridge";
 
 interface ConversationListItem {
   id: string;
@@ -206,6 +207,9 @@ function ShellChrome({ children }: { children: ReactNode }) {
         {/* Renders nothing; turns realtime events into OS notifications. Must
             live inside SocketProvider, which AppShell provides. */}
         <DesktopNotificationBridge />
+        {/* Renders nothing; re-registers this browser's push endpoint so the
+            server can reach it with the tab CLOSED. */}
+        <PushSubscriptionBridge />
       </div>
     </ComposerProvider>
   );

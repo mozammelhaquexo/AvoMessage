@@ -185,7 +185,38 @@ export interface ConversationMember {
   role: ConversationRole;
   lastReadAt: Date;
   isMuted: boolean;
+  /** The member's own display name inside this conversation; null = real name. */
+  nickname: string | null;
   joinedAt: Date;
+}
+
+/**
+ * A private nickname one user gives another. Only `ownerId` ever sees it, so
+ * it is a label on the relationship rather than a property of the target.
+ */
+export interface ContactNickname {
+  ownerId: string;
+  targetId: string;
+  nickname: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * A browser/device Web Push endpoint. `endpoint` is globally unique — it
+ * identifies one browser profile — so re-subscribing updates the row instead
+ * of adding a duplicate.
+ */
+export interface PushSubscription {
+  id: string;
+  userId: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  userAgent: string | null;
+  createdAt: Date;
+  lastUsedAt: Date;
+  failureCount: number;
 }
 
 export interface Message {
@@ -262,6 +293,24 @@ export interface Notification {
   body: string | null;
   readAt: Date | null;
   createdAt: Date;
+}
+
+/**
+ * Per-user notification switches. One row per user, created lazily on first
+ * save — a missing row means "all defaults", which are all true.
+ */
+export interface NotificationPreference {
+  userId: string;
+  likes: boolean;
+  comments: boolean;
+  follows: boolean;
+  mentions: boolean;
+  messages: boolean;
+  invitations: boolean;
+  announcements: boolean;
+  calls: boolean;
+  security: boolean;
+  updatedAt: Date;
 }
 
 export interface Company {
@@ -491,6 +540,8 @@ export interface PrismaClientLike {
   comment: ModelDelegate<Comment>;
   conversation: ModelDelegate<Conversation>;
   conversationMember: ModelDelegate<ConversationMember>;
+  contactNickname: ModelDelegate<ContactNickname>;
+  pushSubscription: ModelDelegate<PushSubscription>;
   message: ModelDelegate<Message>;
   messageReaction: ModelDelegate<MessageReaction>;
   attachment: ModelDelegate<Attachment>;
@@ -498,6 +549,7 @@ export interface PrismaClientLike {
   call: ModelDelegate<Call>;
   callParticipant: ModelDelegate<CallParticipant>;
   notification: ModelDelegate<Notification>;
+  notificationPreference: ModelDelegate<NotificationPreference>;
   company: ModelDelegate<Company>;
   companyMember: ModelDelegate<CompanyMember>;
   team: ModelDelegate<Team>;

@@ -306,7 +306,7 @@ $avo$;
 parts.push(`
 -- =============================================================================
 -- Sanity check - the last result set is what the SQL Editor displays.
--- Expect: tables = 39 (38 app tables + _prisma_migrations), enums = 20,
+-- Expect: tables = 41 (40 app tables + _prisma_migrations), enums = 20,
 --         foreign_keys = 64, migrations = ${migrations.length},
 --         tables_without_rls = 0
 -- =============================================================================
