@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { createElement, memo, useEffect, useState, type ReactNode } from "react";
+import { createElement, memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -24,6 +24,9 @@ import { cn } from "@/components/ui/utils";
 import { apiDelete, apiPatch, apiPost } from "@/lib/api-client";
 import { formatMessageTime, renderRichText } from "@/lib/chat";
 import { AudioPlayer } from "@/components/voice";
+import { ImageLightbox, type LightboxImage } from "./ImageLightbox";
+import { downloadFileName, downloadUrl } from "@/lib/download";
+import { formatBytes } from "@/lib/format";
 import { tweenFast } from "@/lib/motion";
 import type { ChatMessage, ReplyToView } from "@/lib/types";
 
@@ -32,13 +35,6 @@ const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏", "👏
 
 /** Sender edit/delete window — mirrors the server's 15-minute rule. */
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
-
-function formatBytes(n: number | null): string {
-  if (n == null) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function Ticks({ state }: { state: "pending" | "sent" | "delivered" | "read" | "failed" }) {
   if (state === "pending")
@@ -128,6 +124,34 @@ function MessageBubbleInner({
   const [editBusy, setEditBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+
+  /**
+   * The message's images, in order, for the lightbox to page through with the
+   * arrow keys. Built once per message rather than per attachment click so the
+   * index lookups below stay O(1).
+   */
+  const images = useMemo<LightboxImage[]>(
+    () =>
+      message.attachments
+        .filter((a) => a.kind === "IMAGE")
+        .map((a) => ({
+          id: a.id,
+          url: a.url,
+          name: a.name,
+          mimeType: a.mimeType,
+          sizeBytes: a.sizeBytes,
+        })),
+    [message.attachments],
+  );
+
+  const imageIndexById = useMemo(() => {
+    const index = new Map<string, number>();
+    images.forEach((image, i) => index.set(image.id, i));
+    return index;
+  }, [images]);
+
+  /** `null` keeps the lightbox closed. */
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // Edit/delete are only offered inside the 15-minute window (the server
   // enforces the same). Reading the clock during render is impure and would
@@ -323,15 +347,32 @@ function MessageBubbleInner({
                 )}
 
                 {message.attachments.map((a) => (
-                  <AttachmentView key={a.id} kind={a.kind} url={a.url} name={a.name} mimeType={a.mimeType} sizeBytes={a.sizeBytes} />
+                  <AttachmentView
+                    key={a.id}
+                    kind={a.kind}
+                    url={a.url}
+                    name={a.name}
+                    mimeType={a.mimeType}
+                    sizeBytes={a.sizeBytes}
+                    onOpenImage={
+                      a.kind === "IMAGE"
+                        ? () => setLightboxIndex(imageIndexById.get(a.id) ?? 0)
+                        : undefined
+                    }
+                  />
                 ))}
 
                 {message.voice && (
-                  <div className="mt-1 max-w-52">
+                  <div className="mt-1 w-[18rem] max-w-full">
                     <AudioPlayer
                       src={message.voice.url}
                       durationMs={message.voice.durationSeconds * 1000}
                       label={`Voice message from ${message.sender?.name ?? "sender"}`}
+                      mimeType={message.voice.mimeType}
+                      // A voice note has no uploaded filename, so let the
+                      // player derive one; passing `null` (rather than
+                      // omitting the prop) is what asks for the button.
+                      downloadName={null}
                       compact
                     />
                   </div>
@@ -441,6 +482,18 @@ function MessageBubbleInner({
         confirming={deleteBusy}
         onConfirm={() => void doDelete()}
       />
+
+      {/*
+        Owned by the bubble, so the arrow keys page through THIS message's
+        images and nothing else. Portalled to `document.body` internally, so
+        living inside a bubble with `overflow` and a `transform` is safe.
+      */}
+      <ImageLightbox
+        images={images}
+        index={lightboxIndex}
+        onIndexChange={setLightboxIndex}
+        onClose={() => setLightboxIndex(null)}
+      />
     </motion.div>
   );
 }
@@ -458,38 +511,98 @@ function AttachmentView({
   name,
   mimeType,
   sizeBytes,
+  onOpenImage,
 }: {
   kind: string;
   url: string;
   name: string | null;
   mimeType: string | null;
   sizeBytes: number | null;
+  /** Opens the lightbox at this image. Only passed for IMAGE attachments. */
+  onOpenImage?: () => void;
 }) {
   if (kind === "IMAGE") {
+    const fileName = downloadFileName({ name, url, mimeType, prefix: "image" });
     return (
-      // Plain <img>: attachment URLs are user content; next/image needs a
-      // loader allowlist per host.
-      // eslint-disable-next-line @next/next/no-img-element
-      <img src={url} alt={name ?? "Image attachment"} className="img-dim mt-1 max-h-64 rounded-lg object-cover" loading="lazy" />
-    );
-  }
-  if (kind === "VIDEO") {
-    return <video src={url} controls preload="metadata" className="mt-1 max-h-64 rounded-lg" aria-label={name ?? "Video attachment"} />;
-  }
-  if (kind === "VOICE") {
-    return (
-      <div className="mt-1 max-w-52">
-        <AudioPlayer src={url} label={name ?? "Voice message"} compact />
+      <div className="group/img relative mt-1 w-fit max-w-full">
+        <button
+          type="button"
+          onClick={onOpenImage}
+          aria-label={`Open ${fileName}`}
+          className="block max-w-full cursor-zoom-in overflow-hidden rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+        >
+          {/*
+            Plain <img>: attachment URLs are user content, and next/image needs
+            a loader allowlist per host. Deliberately no `object-cover` and a
+            `max-w-full` — a wide screenshot should shrink to fit the bubble
+            rather than be cropped or overflow it. The lightbox is where the
+            image is shown at full size.
+          */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={url}
+            alt={name ?? "Image attachment"}
+            className="img-dim max-h-64 max-w-full rounded-lg"
+            loading="lazy"
+          />
+        </button>
+
+        {/*
+          The quick-save affordance. Always visible on touch — below md there
+          is no hover to reveal it — and on hover or keyboard focus above that,
+          the same rule the message action menu follows.
+        */}
+        <a
+          href={downloadUrl(url, fileName)}
+          download={fileName}
+          aria-label={`Download ${fileName}`}
+          title="Download"
+          className="absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white opacity-100 backdrop-blur-sm transition-opacity hover:bg-black/75 focus-visible:opacity-100 md:opacity-0 md:group-hover/img:opacity-100"
+        >
+          <Icon name="download" size={15} aria-hidden />
+        </a>
       </div>
     );
   }
+
+  if (kind === "VIDEO") {
+    return (
+      <video
+        src={url}
+        controls
+        preload="metadata"
+        className="mt-1 max-h-64 max-w-full rounded-lg"
+        aria-label={name ?? "Video attachment"}
+      />
+    );
+  }
+
+  if (kind === "VOICE") {
+    return (
+      <div className="mt-1 w-[18rem] max-w-full">
+        <AudioPlayer
+          src={url}
+          label={name ?? "Voice message"}
+          mimeType={mimeType}
+          downloadName={name ?? null}
+          compact
+        />
+      </div>
+    );
+  }
+
+  /*
+   * Files go through the same-origin proxy too. The old markup used
+   * `href={url} download` with `target="_blank"`, which opens a tab instead of
+   * downloading the moment the URL is cross-origin — i.e. always, in
+   * production, where the S3 driver is in use.
+   */
+  const fileName = downloadFileName({ name, url, mimeType });
   return (
     <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      download={name ?? undefined}
-      className="mt-1 flex items-center gap-2 rounded-lg bg-surface/60 px-3 py-2 text-body-sm text-ink hover:bg-surface"
+      href={downloadUrl(url, fileName)}
+      download={fileName}
+      className="mt-1 flex max-w-full items-center gap-2 rounded-lg bg-surface/60 px-3 py-2 text-body-sm text-ink hover:bg-surface"
     >
       <Icon name="paperclip" size={16} aria-hidden className="shrink-0 text-ink-3" />
       <span className="min-w-0">

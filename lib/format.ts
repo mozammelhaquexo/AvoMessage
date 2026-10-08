@@ -42,6 +42,20 @@ export function formatCount(n: number): string {
   return `${v >= 100 ? Math.round(v) : v.toFixed(1).replace(/\.0$/, "")}M`;
 }
 
+/**
+ * "0 B" · "1.5 KB" · "2.3 MB" — for attachment sizes.
+ *
+ * Binary units (1024), not decimal: this labels a file the user is about to
+ * download, and every OS file manager reports it the same way. A value that
+ * disagreed with Explorer or Finder would read as a bug.
+ */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** "Acme Corp" → "AC"; "@user" → "US". */
 export function initials(name: string): string {
   const parts = name.trim().replace(/^@/, "").split(/\s+/);

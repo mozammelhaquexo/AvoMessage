@@ -112,7 +112,16 @@ export function DesktopNotificationSetting() {
   const granted = permission === "granted";
   const denied = permission === "denied";
 
-  if (!supported) return null;
+  /*
+   * NOTE: the `if (!supported) return null` guard used to sit HERE, above the
+   * two `useCallback`s below. That is a hook-order violation with a real
+   * crash behind it: `permission` starts as `null` (supported), so the first
+   * render calls every hook; the mount effect then reads the browser and sets
+   * `denied`, and the second render returned early — two hooks fewer than the
+   * previous render. React throws "Rendered fewer hooks than expected", so
+   * opening Settings with notifications already blocked blew up the page.
+   * The guard now lives after the last hook, just before the markup.
+   */
 
   const toggle = useCallback(
     async (next: boolean) => {
@@ -189,6 +198,9 @@ export function DesktopNotificationSetting() {
       });
     }
   }, []);
+
+  // Must stay below every hook in this component — see the note above.
+  if (!supported) return null;
 
   return (
     <Card className="p-5">
