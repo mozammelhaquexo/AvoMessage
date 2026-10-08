@@ -24,7 +24,60 @@ export async function getServerSession(): Promise<ServerSession> {
   const req = new NextRequest("http://localhost/", {
     headers: { cookie: `${SESSION_COOKIE_NAME}=${value}` },
   });
-  return getSessionFromRequest(req);
+  // Fail open when the database is unreachable. A visitor carrying a stale
+  // `avo_session` cookie from a previous deploy must still see the public
+  // landing page (and `try again`) instead of the opaque "Something went
+  // wrong" screen, when the only thing that's broken is the DB itself.
+  // The cookie's HMAC verification still happens — we are only swallowing
+  // errors raised *after* that, when the code tries to look the session
+  // row up in a database that may be down, plan-limited, or suspended.
+  // Routes that genuinely need an authenticated user (the (app) layout,
+  // route handlers, `requireSession`) keep throwing — this is only the
+  // soft-resolve used by layouts that decide between landing and home.
+  try {
+    return await getSessionFromRequest(req);
+  } catch (err) {
+    if (isTransientDbError(err)) {
+      // eslint-disable-next-line no-console -- server-side diagnostic
+      console.warn(
+        "[server-session] treating DB-unreachable as signed-out:",
+        err instanceof Error ? err.message.split("\n")[0] : String(err),
+      );
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * True for errors that mean "couldn't reach / couldn't query the DB",
+ * as opposed to "the query ran and returned an answer we don't like".
+ *
+ * Anything we identify here becomes "signed out" in soft-resolve paths.
+ * The (app) layout / requireSession / API routes still see the real
+ * exception — this is a layout-time courtesy, not a security boundary.
+ */
+function isTransientDbError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  // Prisma Accelerate / Prisma Postgres suspends answer with this exact
+  // string on the free plan once the quota is exhausted. Treat as DB down.
+  if (/planLimitReached|account has restrictions/i.test(msg)) return true;
+  // Generic Prisma connectivity errors (P1xxx codes are operational).
+  if (/^P1[0-9]{3}\b/.test(msg)) return true;
+  // node-postgres connection-level failures.
+  const code = (err as { code?: string }).code;
+  if (
+    code === "ECONNREFUSED" ||
+    code === "ETIMEDOUT" ||
+    code === "ENOTFOUND" ||
+    code === "EAI_AGAIN" ||
+    code === "57P03" || // cannot_connect_now
+    code === "08006" // connection_failure
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**
