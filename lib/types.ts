@@ -46,6 +46,15 @@ export interface ConversationMemberView {
   isMuted: boolean;
   lastReadAt: string;
   joinedAt: string;
+  /** The member's OWN name in this group, or null. Editable by that member. */
+  nickname: string | null;
+  /** The VIEWER's private rename of this member, or null. Editable by the viewer. */
+  contactNickname: string | null;
+  /**
+   * The name to render, already resolved by the server: private rename →
+   * group nickname → real name. Render this, not `user.name`.
+   */
+  displayName: string;
 }
 
 export interface AttachmentView {

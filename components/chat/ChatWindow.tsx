@@ -24,6 +24,7 @@ import {
   Avatar,
   Button,
   ConfirmDialog,
+  Dialog,
   Drawer,
   DropdownMenu,
   EmptyState,
@@ -34,18 +35,20 @@ import {
   toast,
 } from "@/components/ui";
 import { cn } from "@/components/ui/utils";
-import { apiDelete, apiGet, apiPost, ApiError } from "@/lib/api-client";
+import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-client";
 import { useConversation, usePresence, useTyping } from "@/lib/realtime/client";
-import { MessageBubble } from "./MessageBubble";
+import { MessageBubble, type NameResolver } from "./MessageBubble";
 import { ForwardDialog } from "./ForwardDialog";
 import { ConversationMemberManager } from "./ConversationMemberManager";
+import { NicknameEditor } from "./NicknameEditor";
 import { ChatComposer, type ComposerInput } from "./ChatComposer";
 import {
   conversationDisplayName,
   dayKey,
   formatDayLabel,
   isOwnMessage,
+  memberDisplayName,
   messageKey,
   normalizeMessage,
 } from "@/lib/chat";
@@ -72,6 +75,7 @@ export function ChatWindow({ conversationId }: { conversationId: string }) {
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [nicknameOpen, setNicknameOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [muted, setMuted] = useState(false);
@@ -257,10 +261,14 @@ export function ChatWindow({ conversationId }: { conversationId: string }) {
 
   /* ── Typing + presence ───────────────────────────────────────────────── */
 
+  /*
+   * The same resolved name as the byline: "Boss is typing…" must not arrive as
+   * "Ada Lovelace is typing…" while the bubble above it says "Boss".
+   */
   const typingNames = useMemo(
     () =>
       typingUserIds
-        .map((id) => convo?.members.find((m) => m.user.id === id)?.user.name)
+        .map((id) => memberDisplayName(convo?.members ?? [], id))
         .filter((n): n is string => !!n),
     [typingUserIds, convo],
   );
@@ -271,6 +279,41 @@ export function ChatWindow({ conversationId }: { conversationId: string }) {
   const dmPartner = useMemo(
     () => (convo?.type === "DM" ? convo.members.find((m) => m.user.id !== selfId)?.user : undefined),
     [convo, selfId],
+  );
+
+  /**
+   * The viewer's PRIVATE name for the DM partner, if they set one.
+   *
+   * Read from the membership rather than from `dmPartner` because a contact
+   * nickname is a property of the RELATIONSHIP, not of the person — the same
+   * account can be "Rahim" to one colleague and "Rahim (accounts)" to another,
+   * and the server has already resolved which one applies to this viewer.
+   */
+  const dmContactNickname = useMemo(
+    () =>
+      dmPartner
+        ? (convo?.members.find((m) => m.user.id === dmPartner.id)?.contactNickname ?? null)
+        : null,
+    [convo, dmPartner],
+  );
+
+  /**
+   * What to call each person in this thread — the byline above their messages,
+   * the author line on a quoted reply, and the composer's reply strip.
+   *
+   * The server resolves `displayName` on every member row (your private
+   * nickname → their group nickname → their real name); this turns that list
+   * into the lookup the bubbles need. Without it a bubble could only show
+   * `sender.name`, so a nickname would appear in the member list and the header
+   * and then vanish from the conversation itself — the one place it matters.
+   *
+   * A `useCallback`, not an inline arrow, because `MessageBubble` is memoized
+   * by reference: a fresh function every render would re-render the entire
+   * history on every keystroke.
+   */
+  const nameFor = useCallback<NameResolver>(
+    (userId, fallback) => memberDisplayName(convo?.members ?? [], userId, fallback),
+    [convo?.members],
   );
 
   /* ── Search within thread ────────────────────────────────────────────── */
@@ -487,8 +530,28 @@ export function ChatWindow({ conversationId }: { conversationId: string }) {
               id: "options",
               items: [
                 ...(isGroup
-                  ? [{ id: "members", label: "Members", icon: "users" as const, onSelect: () => setMembersOpen(true) }]
-                  : []),
+                  ? [
+                      {
+                        id: "members",
+                        // The drawer holds the group photo and your own
+                        // nickname as well as the member list, so "Members"
+                        // undersold it — and a feature nobody can find is a
+                        // feature that does not exist.
+                        label: "Group settings",
+                        icon: "users" as const,
+                        onSelect: () => setMembersOpen(true),
+                      },
+                    ]
+                  : dmPartner
+                    ? [
+                        {
+                          id: "nickname",
+                          label: dmContactNickname ? "Change nickname" : "Nickname",
+                          icon: "edit" as const,
+                          onSelect: () => setNicknameOpen(true),
+                        },
+                      ]
+                    : []),
                 { id: "mute", label: muted ? "Unmute" : "Mute", icon: "mute" as const, onSelect: () => void toggleMute() },
                 {
                   id: "leave",
@@ -578,6 +641,7 @@ export function ChatWindow({ conversationId }: { conversationId: string }) {
                       message={m}
                       own={isOwnMessage(m, selfId)}
                       showSender={isGroup}
+                      nameFor={nameFor}
                       grouped={grouped}
                       /*
                        * Our own optimistic message is new too. `liveIds` only
@@ -655,21 +719,61 @@ export function ChatWindow({ conversationId }: { conversationId: string }) {
       <ChatComposer
         onSend={handleSend}
         replyTo={replyTo}
+        replyToName={nameFor(replyTo?.sender?.id, replyTo?.sender?.name)}
         onCancelReply={() => setReplyTo(null)}
         onTypingStart={startTyping}
         onTypingStop={stopTyping}
       />
 
       {/* Member drawer (groups) */}
-      <Drawer open={membersOpen} onOpenChange={setMembersOpen} title={`${name} — members`}>
+      <Drawer open={membersOpen} onOpenChange={setMembersOpen} title={`${name} — group settings`}>
         <ConversationMemberManager
           conversationId={conversationId}
+          title={convo.title}
+          avatarUrl={convo.avatarUrl}
           members={convo.members}
           canManage={!!canManageMembers}
           selfId={selfId}
           onChanged={() => void load()}
         />
       </Drawer>
+
+      {/*
+        The DM nickname. A DIALOG rather than an inline field because there is
+        nowhere in the thread header to put one without competing with the
+        partner's name, and because this is a private label — a modal makes it
+        unambiguous that the change is yours alone and is not being announced.
+      */}
+      <Dialog
+        open={nicknameOpen}
+        onOpenChange={setNicknameOpen}
+        title="Nickname"
+        description={
+          dmPartner
+            ? `Only you will see this. ${dmPartner.name} keeps their real name everywhere else, and is never told.`
+            : undefined
+        }
+      >
+        {dmPartner && (
+          <NicknameEditor
+            value={dmContactNickname}
+            realName={dmPartner.name}
+            label={`What you call ${dmPartner.name}`}
+            hint="Private to you. It is used in this chat, the conversation list and notifications."
+            onSave={async (nickname) => {
+              // Clearing has its own verb: `DELETE` on the nickname resource.
+              // Sending `null` through the PUT would also work, but the two
+              // routes existing separately keeps the API self-describing.
+              if (nickname === null) {
+                await apiDelete(`/api/nicknames/${dmPartner.id}`);
+              } else {
+                await apiPut("/api/nicknames", { userId: dmPartner.id, nickname });
+              }
+            }}
+            onSaved={() => void load()}
+          />
+        )}
+      </Dialog>
 
       <ForwardDialog
         // Remount per forwarded message so the dialog always opens with a

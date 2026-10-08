@@ -72,7 +72,14 @@ interface ConversationPreview {
   id: string;
   type: string;
   title: string | null;
-  members: { user: { id: string; name: string } }[];
+  /**
+   * `displayName` is declared even though nothing here reads it directly:
+   * `conversationDisplayName` does, and omitting it from this type would say —
+   * falsely — that the payload has no nickname to use. The field IS in the
+   * response (`conversationMemberView` resolves it), so a DM banner shows the
+   * name the viewer set rather than the partner's real one.
+   */
+  members: { user: { id: string; name: string }; displayName?: string }[];
   lastMessage: { body: string | null; senderId: string | null } | null;
 }
 
@@ -186,6 +193,18 @@ export function DesktopNotificationBridge() {
       remember(message.id);
       if (selfId && message.senderId === selfId) return;
       if (pushOwnsMessages.current) return;
+      /*
+       * `author.name` is the REAL name, and that is a deliberate limit rather
+       * than an oversight: a nickname is a property of the relationship, so
+       * resolving one needs the recipient's member list, and a `message:new`
+       * payload carries only the author's name. Fetching the conversation here
+       * would put a request on every message in the thread the user already has
+       * open — for a banner they are looking at the real thing behind.
+       *
+       * The paths that CAN resolve it do: the service worker's push payload is
+       * built per recipient (see `notifyNewMessage`), and source 2b below goes
+       * through `conversationDisplayName` on a conversation it fetched.
+       */
       show({
         title: message.author?.name ?? "New message",
         body: message.body ?? "Sent an attachment",

@@ -8,7 +8,13 @@
  * socket, no React.
  */
 import { describe, expect, it } from 'vitest';
-import { conversationDisplayName, isOwnMessage, messageKey, seenState } from '@/lib/chat';
+import {
+  conversationDisplayName,
+  isOwnMessage,
+  memberDisplayName,
+  messageKey,
+  seenState,
+} from '@/lib/chat';
 
 const SELF = 'me';
 const OTHER = 'them';
@@ -151,6 +157,50 @@ describe('conversationDisplayName', () => {
         SELF,
       ),
     ).toBe('Ada');
+  });
+});
+
+/**
+ * The per-person rule. `conversationDisplayName` answers "what is this thread
+ * called"; this answers "what is this person called inside it" — the byline
+ * above a group message, the author on a quoted reply, the composer's reply
+ * strip.
+ */
+describe('memberDisplayName', () => {
+  const members = [
+    { user: { id: SELF, name: 'Me' }, displayName: 'Me' },
+    { user: { id: OTHER, name: 'Ada Lovelace' }, displayName: 'Boss' },
+    { user: { id: THIRD, name: 'Grace Hopper' } },
+  ];
+
+  it('prefers the server-resolved displayName', () => {
+    expect(memberDisplayName(members, OTHER, 'Ada Lovelace')).toBe('Boss');
+  });
+
+  it('falls back to the real name when the server did not resolve one', () => {
+    // A live `message:new` carries only `author.name`, and a member list that
+    // has not loaded yet has nothing to look up.
+    expect(memberDisplayName(members, THIRD, 'Grace Hopper')).toBe('Grace Hopper');
+  });
+
+  it('uses the caller-supplied fallback when the person is not a member', () => {
+    expect(memberDisplayName(members, 'stranger', 'Someone Else')).toBe('Someone Else');
+  });
+
+  it('uses the fallback for a null sender rather than throwing', () => {
+    // A deleted account leaves `sender: null` on a message.
+    expect(memberDisplayName(members, null, 'Unknown')).toBe('Unknown');
+    expect(memberDisplayName(members, undefined, undefined)).toBeNull();
+  });
+
+  it('does not confuse two members with the same real name', () => {
+    // The lookup is by ID, so two people called "Rahim" stay distinct.
+    const twins = [
+      { user: { id: 'a', name: 'Rahim' }, displayName: 'Rahim (accounts)' },
+      { user: { id: 'b', name: 'Rahim' }, displayName: 'Rahim (sales)' },
+    ];
+    expect(memberDisplayName(twins, 'a', 'Rahim')).toBe('Rahim (accounts)');
+    expect(memberDisplayName(twins, 'b', 'Rahim')).toBe('Rahim (sales)');
   });
 });
 

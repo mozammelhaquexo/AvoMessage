@@ -60,12 +60,38 @@ function Ticks({ state }: { state: "pending" | "sent" | "delivered" | "read" | "
   );
 }
 
+/**
+ * Resolves a user id to the name THIS viewer should see. See `memberDisplayName`
+ * in lib/chat — the chat window builds one from the open thread's member list,
+ * which is where the server's resolved `displayName` arrives.
+ */
+export type NameResolver = (
+  userId: string | null | undefined,
+  fallback?: string | null,
+) => string | null;
+
+/**
+ * Default resolver: whatever the message itself carries.
+ *
+ * Module-level (not an inline arrow) so the memoized bubble sees a stable
+ * reference and does not re-render the whole history when no resolver is given.
+ */
+const nameFromMessage: NameResolver = (_userId, fallback) => fallback ?? null;
+
 interface MessageBubbleProps {
   message: ChatMessage;
   /** Whether the viewer sent this message. */
   own: boolean;
   /** Show the sender's name/avatar (group chats). */
   showSender?: boolean;
+  /**
+   * What to call the sender, and the author of a quoted reply/forward.
+   *
+   * Without this the bubble can only show `message.sender.name`, so a group
+   * nickname or a private contact nickname would appear in the member list and
+   * the header but never above the messages themselves.
+   */
+  nameFor?: NameResolver;
   /** True when the previous visible message is from the same sender —
       renders a tighter, visually grouped bubble. */
   grouped?: boolean;
@@ -86,9 +112,21 @@ interface MessageBubbleProps {
  * The quoted strip above a bubble — used for both a reply's parent and a
  * forward's source. `authorName` is the socket-payload fallback: a live
  * `message:new` carries only the author's name, not a full PublicUser.
+ *
+ * `name` is the already-resolved display name. When it is absent the chain
+ * below still runs, so a caller that cannot resolve names degrades to exactly
+ * the old behaviour rather than to an empty line.
  */
-function QuoteBlock({ quote, tone }: { quote: ReplyToView; tone: "reply" | "forward" }) {
-  const name = quote.sender?.name ?? quote.authorName ?? "Someone";
+function QuoteBlock({
+  quote,
+  tone,
+  name: resolved,
+}: {
+  quote: ReplyToView;
+  tone: "reply" | "forward";
+  name?: string | null;
+}) {
+  const name = resolved ?? quote.sender?.name ?? quote.authorName ?? "Someone";
   return (
     <div
       className={cn(
@@ -108,6 +146,7 @@ function MessageBubbleInner({
   message,
   own,
   showSender = false,
+  nameFor = nameFromMessage,
   grouped = false,
   receipt = "sent",
   isNew = false,
@@ -258,6 +297,13 @@ function MessageBubbleInner({
         )
       : [];
 
+  /*
+   * The byline. The href stays the real username — a nickname is not an
+   * address and is not unique — so only the LABEL is renamed, and the `title`
+   * carries the real name whenever the two differ.
+   */
+  const senderLabel = nameFor(message.sender?.id, message.sender?.name) ?? "?";
+
   return (
     <motion.div
       initial={isNew ? { opacity: 0, y: 8 } : false}
@@ -269,7 +315,7 @@ function MessageBubbleInner({
       {showSender && !own && (
         <Avatar
           src={message.sender?.avatarUrl ?? null}
-          name={message.sender?.name ?? "?"}
+          name={nameFor(message.sender?.id, message.sender?.name) ?? "?"}
           size="sm"
           className={cn("mt-1", grouped && "invisible")}
         />
@@ -287,8 +333,9 @@ function MessageBubbleInner({
             href={`/profile/${message.sender.username}`}
             prefetch
             className="mb-0.5 ml-1 w-fit rounded-sm text-caption font-semibold text-accent transition-colors duration-fast hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            title={senderLabel === message.sender.name ? undefined : message.sender.name}
           >
-            {message.sender.name}
+            {senderLabel}
           </Link>
         )}
 
@@ -312,8 +359,23 @@ function MessageBubbleInner({
               </div>
             )}
 
-            {message.replyTo && <QuoteBlock quote={message.replyTo} tone="reply" />}
-            {message.forwardedFrom && <QuoteBlock quote={message.forwardedFrom} tone="forward" />}
+            {message.replyTo && (
+              <QuoteBlock
+                quote={message.replyTo}
+                tone="reply"
+                name={nameFor(message.replyTo.sender?.id, message.replyTo.sender?.name)}
+              />
+            )}
+            {message.forwardedFrom && (
+              <QuoteBlock
+                quote={message.forwardedFrom}
+                tone="forward"
+                name={nameFor(
+                  message.forwardedFrom.sender?.id,
+                  message.forwardedFrom.sender?.name,
+                )}
+              />
+            )}
 
             {editing ? (
               <div className="flex min-w-48 flex-col gap-2">
@@ -367,7 +429,9 @@ function MessageBubbleInner({
                     <AudioPlayer
                       src={message.voice.url}
                       durationMs={message.voice.durationSeconds * 1000}
-                      label={`Voice message from ${message.sender?.name ?? "sender"}`}
+                      // Not `senderLabel`: its "?" fallback suits an avatar but
+                      // reads badly as "Voice message from ?".
+                      label={`Voice message from ${nameFor(message.sender?.id, message.sender?.name) ?? "sender"}`}
                       mimeType={message.voice.mimeType}
                       // A voice note has no uploaded filename, so let the
                       // player derive one; passing `null` (rather than

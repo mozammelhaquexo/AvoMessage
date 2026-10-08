@@ -36,6 +36,10 @@
 
 import webpush from 'web-push';
 import type { PrismaClientLike } from './prisma-types.js';
+// Relative with a `.js` suffix, not the `@/` alias: this module is compiled by
+// tsconfig.server.json for the plain-node socket server, and tsc does not
+// rewrite path aliases (see the notes in that config).
+import { resolveDisplayName } from './display-name.js';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -111,7 +115,16 @@ export interface VapidKeys {
 
 export interface NewMessageInput {
   conversationId: string;
-  /** Display name of the sender, already nickname-resolved by the caller. */
+  /**
+   * The sender's REAL name.
+   *
+   * Deliberately not pre-resolved: a nickname is a property of the
+   * relationship, so the right name differs per recipient — the banner must
+   * say "Rahim (accounts)" to the one colleague who renamed him and his real
+   * name to everybody else. `notifyNewMessage` does that resolution, per
+   * recipient, from the sender's group nickname and each recipient's private
+   * contact nickname.
+   */
   senderName: string;
   senderId: string;
   senderAvatarUrl: string | null;
@@ -426,6 +439,8 @@ interface MemberRow {
   userId: string;
   isMuted: boolean;
   lastReadAt: Date;
+  /** The member's OWN name inside this group, when they set one. */
+  nickname?: string | null;
 }
 
 /**
@@ -450,7 +465,7 @@ export async function notifyNewMessage(
 
   const members = await db.conversationMember.findMany<MemberRow>({
     where: { conversationId: input.conversationId },
-    select: { userId: true, isMuted: true, lastReadAt: true },
+    select: { userId: true, isMuted: true, lastReadAt: true, nickname: true },
   });
 
   const recipients = members.filter((m) => m.userId !== input.senderId && !m.isMuted);
@@ -489,10 +504,48 @@ export async function notifyNewMessage(
 
   const isGroup = conversation.type === 'GROUP';
   const groupName = conversation.title?.trim() || 'Group';
-  const title = isGroup ? `${input.senderName} · ${groupName}` : input.senderName;
   const body = previewOf(input);
   // A group's own picture is more recognisable than one member's avatar.
   const icon = (isGroup ? conversation.avatarUrl : input.senderAvatarUrl) ?? undefined;
+
+  /*
+   * The sender's GROUP nickname — one value for the whole group, because the
+   * member set a name belongs to does not depend on who is reading. Read from
+   * the member rows already loaded above, so this costs no extra query.
+   */
+  const senderGroupNickname =
+    members.find((m) => m.userId === input.senderId)?.nickname?.trim() || null;
+
+  /*
+   * Each recipient's PRIVATE name for the sender — the part that genuinely
+   * differs per person, so it cannot be resolved once outside the loop. One
+   * query for every recipient rather than one each.
+   */
+  const contactRows = await db.contactNickname
+    .findMany({
+      where: { ownerId: { in: recipientIds }, targetId: input.senderId },
+      select: { ownerId: true, nickname: true },
+    })
+    .catch(() => [] as { ownerId: string; nickname: string }[]);
+  const contactByOwner = new Map(contactRows.map((row) => [row.ownerId, row.nickname]));
+
+  /**
+   * The name THIS recipient knows the sender by.
+   *
+   * A notification is where getting this wrong is most obvious: the banner
+   * says "Test abc123" while the conversation list right behind it says "Rahim
+   * (accounts)". So the chat's own precedence applies here too — the
+   * recipient's private nickname, then the sender's group nickname, then the
+   * real name.
+   */
+  const titleFor = (userId: string): string => {
+    const senderName = resolveDisplayName({
+      realName: input.senderName,
+      groupNickname: senderGroupNickname,
+      contactNickname: contactByOwner.get(userId) ?? null,
+    });
+    return isGroup ? `${senderName} · ${groupName}` : senderName;
+  };
 
   const created: CreatedNotification[] = [];
   const toPush: string[] = [];
@@ -512,7 +565,7 @@ export async function notifyNewMessage(
           // Storing the message id sent readers to a dead link.
           entityType: 'conversation',
           entityId: input.conversationId,
-          title,
+          title: titleFor(member.userId),
           body,
         },
       });
@@ -563,16 +616,27 @@ export async function notifyNewMessage(
       }),
     );
 
-    const byBadge = new Map<number | undefined, string[]>();
+    /*
+     * Bucket by (badge, title) — not by badge alone.
+     *
+     * The title is now per-recipient, so two recipients with the same unread
+     * count can still need different banners: one renamed the sender, the other
+     * did not. Grouping on the count alone would send the first recipient's
+     * label to the second. Recipients that agree on BOTH still share one push,
+     * so the common case (nobody has renamed anybody) is unchanged.
+     */
+    const byBadgeAndTitle = new Map<string, { badgeCount: number | undefined; title: string; userIds: string[] }>();
     for (const [userId, count] of badges) {
       if (!pushSet.has(userId)) continue;
-      const bucket = byBadge.get(count);
-      if (bucket) bucket.push(userId);
-      else byBadge.set(count, [userId]);
+      const title = titleFor(userId);
+      const key = `${count ?? ''}\u0000${title}`;
+      const bucket = byBadgeAndTitle.get(key);
+      if (bucket) bucket.userIds.push(userId);
+      else byBadgeAndTitle.set(key, { badgeCount: count, title, userIds: [userId] });
     }
 
     await Promise.all(
-      [...byBadge].map(([badgeCount, userIds]) =>
+      [...byBadgeAndTitle.values()].map(({ badgeCount, title, userIds }) =>
         pushToUsers(db, userIds, {
           title,
           body,

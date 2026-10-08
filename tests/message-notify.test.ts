@@ -46,11 +46,15 @@ interface MemberSeed {
   userId: string;
   isMuted?: boolean;
   lastReadAt?: Date;
+  /** The member's own name inside this group. */
+  nickname?: string | null;
 }
 
 interface FakeSeed {
   conversation?: { id: string; type: string; title: string | null; avatarUrl: string | null } | null;
   members?: MemberSeed[];
+  /** Private renames: `ownerId` calls `targetId` `nickname`. */
+  contactNicknames?: { ownerId: string; targetId: string; nickname: string }[];
   blocks?: { blockerId: string; blockedId: string }[];
   prefs?: { userId: string; messages: boolean }[];
   unreadByUser?: Record<string, number>;
@@ -69,6 +73,7 @@ interface FakeSeed {
 interface FakeDb {
   conversation: { findUnique: ReturnType<typeof vi.fn> };
   conversationMember: { findMany: ReturnType<typeof vi.fn> };
+  contactNickname: { findMany: ReturnType<typeof vi.fn> };
   block: { findMany: ReturnType<typeof vi.fn> };
   notificationPreference: { findMany: ReturnType<typeof vi.fn> };
   notification: { create: ReturnType<typeof vi.fn> };
@@ -109,7 +114,19 @@ function makeDb(seed: FakeSeed = {}): Harness {
           userId: m.userId,
           isMuted: m.isMuted ?? false,
           lastReadAt: m.lastReadAt ?? new Date('2026-01-01T00:00:00.000Z'),
+          nickname: m.nickname ?? null,
         })),
+      ),
+    },
+    // Honours the `ownerId: { in: [...] }, targetId` filter — that filter is
+    // what makes the rename private, so a fake that ignored it would hide a
+    // leak (somebody else's label reaching this recipient).
+    contactNickname: {
+      findMany: vi.fn(
+        async ({ where }: { where: { ownerId: { in: string[] }; targetId: string } }) =>
+          (seed.contactNicknames ?? []).filter(
+            (c) => where.ownerId.in.includes(c.ownerId) && c.targetId === where.targetId,
+          ),
       ),
     },
     block: { findMany: vi.fn(async () => seed.blocks ?? []) },
@@ -351,6 +368,90 @@ describe('notifyNewMessage — the text', () => {
     await notifyNewMessage(db as never, input());
 
     expect(createdNotifications[0]!.title).toBe('Ada Lovelace · Group');
+  });
+
+  /*
+   * The banner has to agree with the conversation list behind it. If the list
+   * says "Rahim (accounts)" and the notification says "Ada Lovelace", the user
+   * is being told two different people sent the same message.
+   */
+  it("uses the recipient's PRIVATE name for the sender", async () => {
+    const { db, createdNotifications } = makeDb({
+      conversation: { id: 'c1', type: 'DM', title: null, avatarUrl: null },
+      members: [{ userId: 'user-bob' }],
+      contactNicknames: [
+        { ownerId: 'user-bob', targetId: 'user-sender', nickname: 'Rahim (accounts)' },
+      ],
+    });
+
+    await notifyNewMessage(db as never, input());
+
+    expect(createdNotifications[0]!.title).toBe('Rahim (accounts)');
+  });
+
+  it('uses the sender\'s own group nickname for everyone in the group', async () => {
+    const { db, createdNotifications } = makeDb({
+      conversation: { id: 'c1', type: 'GROUP', title: 'Design Team', avatarUrl: null },
+      members: [
+        { userId: 'user-sender', nickname: 'Boss' },
+        { userId: 'user-bob' },
+      ],
+    });
+
+    await notifyNewMessage(db as never, input());
+
+    expect(createdNotifications[0]!.title).toBe('Boss · Design Team');
+  });
+
+  it('lets one rename reach only the person who made it', async () => {
+    const { db, createdNotifications } = makeDb({
+      conversation: { id: 'c1', type: 'GROUP', title: 'Design Team', avatarUrl: null },
+      members: [
+        { userId: 'user-sender', nickname: 'Boss' },
+        { userId: 'user-bob' },
+        { userId: 'user-carol' },
+      ],
+      // Bob renamed the sender; Carol did not. A title resolved once outside
+      // the loop would have given Carol Bob's private label.
+      contactNicknames: [
+        { ownerId: 'user-bob', targetId: 'user-sender', nickname: 'My Boss' },
+      ],
+    });
+
+    await notifyNewMessage(db as never, input());
+
+    const byUser = new Map(createdNotifications.map((n) => [n.userId, n.title]));
+    expect(byUser.get('user-bob')).toBe('My Boss · Design Team');
+    expect(byUser.get('user-carol')).toBe('Boss · Design Team');
+  });
+
+  it('never sends somebody else\'s private label to a recipient', async () => {
+    const { db, createdNotifications } = makeDb({
+      conversation: { id: 'c1', type: 'DM', title: null, avatarUrl: null },
+      members: [{ userId: 'user-bob' }, { userId: 'user-carol' }],
+      contactNicknames: [
+        { ownerId: 'user-carol', targetId: 'user-sender', nickname: 'Carol Only' },
+      ],
+    });
+
+    await notifyNewMessage(db as never, input());
+
+    const byUser = new Map(createdNotifications.map((n) => [n.userId, n.title]));
+    expect(byUser.get('user-carol')).toBe('Carol Only');
+    expect(byUser.get('user-bob')).toBe('Ada Lovelace');
+  });
+
+  it('falls back to the real name when the nickname is blank', async () => {
+    const { db, createdNotifications } = makeDb({
+      conversation: { id: 'c1', type: 'DM', title: null, avatarUrl: null },
+      members: [{ userId: 'user-bob' }],
+      // A row of spaces would otherwise render an unnamed banner.
+      contactNicknames: [{ ownerId: 'user-bob', targetId: 'user-sender', nickname: '   ' }],
+    });
+
+    await notifyNewMessage(db as never, input());
+
+    expect(createdNotifications[0]!.title).toBe('Ada Lovelace');
   });
 
   it.each([

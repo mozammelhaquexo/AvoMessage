@@ -49,6 +49,13 @@ interface ChatComposerProps {
   onSend: (input: ComposerInput) => void;
   disabled?: boolean;
   replyTo: ChatMessage | null;
+  /**
+   * The reply target's name as THIS viewer should see it — the resolved
+   * `displayName` (private nickname → group nickname → real name), not
+   * `replyTo.sender.name`. Optional so the old behaviour stands when the
+   * caller has no member list to resolve against.
+   */
+  replyToName?: string | null;
   onCancelReply: () => void;
   onTypingStart: () => void;
   onTypingStop: () => void;
@@ -67,6 +74,7 @@ export function ChatComposer({
   onSend,
   disabled,
   replyTo,
+  replyToName,
   onCancelReply,
   onTypingStart,
   onTypingStop,
@@ -202,7 +210,7 @@ export function ChatComposer({
             <div className="mb-2 flex items-center gap-2 rounded-lg border-l-2 border-brand bg-surface-2 px-3 py-2">
               <div className="min-w-0 flex-1">
                 <p className="text-caption font-semibold text-brand-strong">
-                  Replying to {replyTo.sender?.name ?? "message"}
+                  Replying to {replyToName ?? replyTo.sender?.name ?? "message"}
                 </p>
                 <p className="line-clamp-1 text-caption text-ink-2">{replyTo.body ?? "Attachment"}</p>
               </div>

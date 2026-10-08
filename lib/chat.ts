@@ -225,12 +225,23 @@ export function renderRichText(
 /* ── Conversation display helpers ──────────────────────────────────────── */
 
 export function conversationDisplayName(
-  convo: { type: string; title: string | null; members: { user: { id: string; name: string } }[] },
+  convo: {
+    type: string;
+    title: string | null;
+    members: { user: { id: string; name: string }; displayName?: string }[];
+  },
   selfId: string,
 ): string {
   if (convo.type === "GROUP") return convo.title ?? "Group chat";
   const other = convo.members.find((m) => m.user.id !== selfId);
-  return other?.user.name ?? "Direct message";
+  /*
+   * `displayName` is the server's resolved name — the viewer's private
+   * nickname, then the member's own group nickname, then the real name. It is
+   * OPTIONAL because this helper is also called with bare member lists (and is
+   * unit-tested that way), so `user.name` remains the fallback rather than a
+   * second code path.
+   */
+  return other?.displayName ?? other?.user.name ?? "Direct message";
 }
 
 export function otherMember(
@@ -238,6 +249,38 @@ export function otherMember(
   selfId: string,
 ): (typeof members)[number] | undefined {
   return members.find((m) => m.user.id !== selfId);
+}
+
+/**
+ * What to call ONE person inside a thread — the bubble byline, the quoted
+ * reply's author, the composer's "Replying to …".
+ *
+ * This is the same rule as `conversationDisplayName`, one level down, and it
+ * has to live in one place for the same reason: a group nickname that appears
+ * in the member drawer but not above the person's own messages is worse than no
+ * nickname at all — the user sets it, sees it in the list, and then watches
+ * somebody's real name arrive with every message.
+ *
+ * `displayName` is OPTIONAL because the member list is not always to hand:
+ *
+ *   - a message loaded from `GET …/messages` is joined against
+ *     `GET /api/conversations/:id`, which the chat window holds — so the
+ *     resolved name IS available for every bubble in the open thread;
+ *   - a live `message:new` carries only `author.name` (see the note on
+ *     `QuoteBlock`), and a thread whose member list has not arrived yet has
+ *     nothing to resolve against.
+ *
+ * In both of those cases the real name is the honest answer, so `fallback` is
+ * returned rather than an empty string or a placeholder.
+ */
+export function memberDisplayName(
+  members: { user: { id: string; name: string }; displayName?: string }[],
+  userId: string | null | undefined,
+  fallback?: string | null,
+): string | null {
+  if (!userId) return fallback ?? null;
+  const member = members.find((m) => m.user.id === userId);
+  return member?.displayName ?? member?.user.name ?? fallback ?? null;
 }
 
 /* ── Delivery / seen state ─────────────────────────────────────────────── */

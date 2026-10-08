@@ -23,6 +23,7 @@ import type {
   User,
   VoiceMessage,
 } from "@/lib/prisma-types";
+import { resolveDisplayName } from "@/lib/display-name";
 
 export interface PublicUser {
   id: string;
@@ -264,17 +265,43 @@ export interface ConversationMemberView {
   isMuted: boolean;
   lastReadAt: string;
   joinedAt: string;
+  /** The member's OWN name in this group, or null. Editable by that member. */
+  nickname: string | null;
+  /** The VIEWER's private rename of this member, or null. Editable by the viewer. */
+  contactNickname: string | null;
+  /**
+   * The name to render, already resolved: private rename → group nickname →
+   * real name.
+   *
+   * Resolved on the SERVER rather than left as three nullable fields for the
+   * client to combine, because every consumer would otherwise have to remember
+   * the precedence — the chat header, the conversation list, the forward
+   * dialog, the member drawer and the desktop notification all show this name,
+   * and one of them getting the order wrong means the same person appears under
+   * two different names in the same session.
+   */
+  displayName: string;
 }
 
 export function conversationMemberView(
-  m: ConversationMember & { user: User }
+  m: ConversationMember & { user: User },
+  /** The viewer's private rename of this member, resolved by the caller. */
+  contactNickname: string | null = null,
 ): ConversationMemberView {
+  const groupNickname = m.nickname ?? null;
   return {
     user: publicUser(m.user),
     role: m.role,
     isMuted: m.isMuted,
     lastReadAt: m.lastReadAt.toISOString(),
     joinedAt: m.joinedAt.toISOString(),
+    nickname: groupNickname,
+    contactNickname,
+    displayName: resolveDisplayName({
+      realName: m.user.name,
+      groupNickname,
+      contactNickname,
+    }),
   };
 }
 

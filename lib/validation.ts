@@ -468,6 +468,33 @@ export const conversationMembersAddSchema = z.object({
 });
 export type ConversationMembersAddInput = z.infer<typeof conversationMembersAddSchema>;
 
+/**
+ * A member's OWN name inside one group.
+ *
+ * `null` clears it back to the real name. A blank string is rejected rather
+ * than treated as "clear": the two are different intentions, and silently
+ * accepting `""` would make a mistyped space look like a deliberate reset.
+ *
+ * 60 characters is the column width (`ConversationMember.nickname`), so the
+ * limit is enforced here rather than left for Postgres to reject with a 500.
+ */
+export const memberNicknameSchema = z.object({
+  nickname: z.string().trim().min(1).max(60).nullable(),
+});
+export type MemberNicknameInput = z.infer<typeof memberNicknameSchema>;
+
+/**
+ * A PRIVATE nickname one user gives another. Only the owner ever sees it.
+ *
+ * Same null-clears / blank-rejected rule as above. `userId` is the person being
+ * renamed — never the caller, which the service rejects explicitly.
+ */
+export const contactNicknameSchema = z.object({
+  userId: cuidSchema,
+  nickname: z.string().trim().min(1).max(60).nullable(),
+});
+export type ContactNicknameInput = z.infer<typeof contactNicknameSchema>;
+
 const emojiSchema = z
   .string()
   .min(1)
