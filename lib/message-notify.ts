@@ -35,11 +35,14 @@
  */
 
 import webpush from 'web-push';
-import type { PrismaClientLike } from './prisma-types.js';
-// Relative with a `.js` suffix, not the `@/` alias: this module is compiled by
-// tsconfig.server.json for the plain-node socket server, and tsc does not
-// rewrite path aliases (see the notes in that config).
-import { resolveDisplayName } from './display-name.js';
+import type { PrismaClientLike } from './prisma-types';
+// Relative without a `.js` suffix so Next.js / Turbopack's bundler
+// moduleResolution can resolve the .ts source — `.js` extension imports
+// work for the tsc server compile but Turbopack's resolver was rejecting
+// this specific path. Adding `lib/display-name.ts` to the server config
+// keeps the tsc compile happy; it now lives alongside the other relative
+// imports in tsconfig.server.json's include list.
+import { resolveDisplayName } from './display-name';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
