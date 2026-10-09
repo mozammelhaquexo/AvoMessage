@@ -1,0 +1,316 @@
+﻿
+> avomessage@0.1.0 build
+> next build
+
+▲ Next.js 16.3.8 (Turbopack)
+- Environments: .env.local, .env.production, .env
+✓ Running next.config.ts took 56ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 4.2s
+  Running TypeScript ...
+  Finished TypeScript in 3.1s ...
+  Collecting page data using 11 workers ...
+  Generating static pages using 11 workers (0/88) ...
+  Generating static pages using 11 workers (22/88) 
+  Generating static pages using 11 workers (44/88) 
+  Generating static pages using 11 workers (66/88) 
+✓ Generating static pages using 11 workers (88/88) in 426ms
+node.exe : Turbopack build encountered 4 warnings:
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Turbopack build encountered 4 warnings::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+./lib/mailer.ts:144:40
+Warning: The file pattern '/ROOT/storage/mail' matches 15443 files in [project]/
+  [90m142 |[0m
+  [90m143 |[0m [36mfunction[0m mailDir(): string {
+[33m[1m>[0m [90m144 |[0m   [36mreturn[0m process.env.[33mMAILER_LOG_DIR[0m ?? join(process.cwd(), 
+[32m'storage'[0m, [32m'mail'[0m);
+  [90m    |[0m                                        [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m145 |[0m }
+  [90m146 |[0m
+  [90m147 |[0m /**
+
+Overly broad patterns can lead to build performance issues and over bundling.
+
+Import traces:
+  #1 [App Route]:
+    ./lib/mailer.ts
+    ./lib/storage.ts
+    ./app/api/uploads/[...path]/route.ts
+
+  #2 [App Route]:
+    ./lib/mailer.ts
+    ./lib/services/otp.ts
+    ./app/api/otp/verify/route.ts
+
+  #3 [Server Component]:
+    ./lib/mailer.ts
+    ./lib/services/companies.ts
+    ./app/(app)/companies/new/page.tsx
+
+
+./lib/mailer.ts:251:23
+Warning: The file pattern (<dynamic> '/' <dynamic> '-' <dynamic> '.html' | '/ROOT/storage/mail/' <dynamic> '-' 
+<dynamic> '.html' | <dynamic> '-' <dynamic> '.html' | '/ROOT/storage/mail' <dynamic> '-' <dynamic> '.html') matches 
+46337 files in [project]/
+  [90m249 |[0m     [36mtry[0m {
+  [90m250 |[0m       [36mawait[0m mkdir(mailDir(), { recursive: [36mtrue[0m });
+[33m[1m>[0m [90m251 |[0m       [36mawait[0m writeFile(join(mailDir(), 
+[32m`[0m${stamp[32m}-[0m${tag[32m}.html`[0m), opts.html, [32m'utf8'[0m);
+  [90m    |[0m                       [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m252 |[0m     } [36mcatch[0m (e) {
+  [90m253 |[0m       console.warn([32m'[mailer:log] could not write mail file'[0m, e);
+  [90m254 |[0m     }
+
+Overly broad patterns can lead to build performance issues and over bundling.
+
+Import traces:
+  #1 [App Route]:
+    ./lib/mailer.ts
+    ./lib/storage.ts
+    ./app/api/uploads/[...path]/route.ts
+
+  #2 [App Route]:
+    ./lib/mailer.ts
+    ./lib/services/otp.ts
+    ./app/api/otp/verify/route.ts
+
+  #3 [Server Component]:
+    ./lib/mailer.ts
+    ./lib/services/companies.ts
+    ./app/(app)/companies/new/page.tsx
+
+
+./lib/storage.ts:220:10
+Warning: The file pattern (<dynamic> | '/ROOT/storage/uploads') matches 15997 files in [project]/
+  [90m218 |[0m   [90m// whether STORAGE_LOCAL_DIR was set as `./storage/uploads` or a Windows path.[0m
+  [90m219 |[0m   [36mconst[0m raw = process.env.[33mSTORAGE_LOCAL_DIR[0m ?? join(process.cwd(), 
+[32m'storage'[0m, [32m'uploads'[0m);
+[33m[1m>[0m [90m220 |[0m   [36mreturn[0m resolve(raw);
+  [90m    |[0m          [33m[1m^^^^^^^^^^^^[0m
+  [90m221 |[0m }
+  [90m222 |[0m
+  [90m223 |[0m [36mexport[0m [36mclass[0m [33mLocalStorageDriver[0m [36mimplements[0m [33mStorageDriver[0m 
+{
+
+Overly broad patterns can lead to build performance issues and over bundling.
+
+Import trace:
+  App Route:
+    ./lib/storage.ts
+    ./app/api/uploads/[...path]/route.ts
+
+
+./lib/storage.ts:220:10
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m218 |[0m   [90m// whether STORAGE_LOCAL_DIR was set as `./storage/uploads` or a Windows path.[0m
+  [90m219 |[0m   [36mconst[0m raw = process.env.[33mSTORAGE_LOCAL_DIR[0m ?? join(process.cwd(), 
+[32m'storage'[0m, [32m'uploads'[0m);
+[33m[1m>[0m [90m220 |[0m   [36mreturn[0m resolve(raw);
+  [90m    |[0m          [33m[1m^^^^^^^^^^^^[0m
+  [90m221 |[0m }
+  [90m222 |[0m
+  [90m223 |[0m [36mexport[0m [36mclass[0m [33mLocalStorageDriver[0m [36mimplements[0m [33mStorageDriver[0m 
+{
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the 
+output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of 
+the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.resolve(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import trace:
+  App Route:
+    ./lib/storage.ts
+    ./app/api/uploads/[...path]/route.ts
+
+
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ƒ /_not-found
+├ ƒ /admin
+├ ƒ /admin/analytics
+├ ƒ /admin/announcements
+├ ƒ /admin/applications
+├ ƒ /admin/applications/[id]
+├ ƒ /admin/audit-logs
+├ ƒ /admin/companies
+├ ƒ /admin/content
+├ ƒ /admin/managers
+├ ƒ /admin/managers/[companyId]
+├ ƒ /admin/moderation
+├ ƒ /admin/reports
+├ ƒ /admin/reports/[id]
+├ ƒ /admin/roles
+├ ƒ /admin/settings
+├ ƒ /admin/users
+├ ƒ /admin/users/[id]
+├ ƒ /api/admin/analytics
+├ ƒ /api/admin/announcements
+├ ƒ /api/admin/announcements/[id]
+├ ƒ /api/admin/audit-logs
+├ ƒ /api/admin/backup
+├ ƒ /api/admin/comments
+├ ƒ /api/admin/comments/[id]
+├ ƒ /api/admin/companies
+├ ƒ /api/admin/companies/[id]
+├ ƒ /api/admin/dashboard
+├ ƒ /api/admin/manager-applications
+├ ƒ /api/admin/manager-applications/[id]
+├ ƒ /api/admin/managers
+├ ƒ /api/admin/managers/[companyId]
+├ ƒ /api/admin/managers/[companyId]/members/[userId]
+├ ƒ /api/admin/managers/[companyId]/members/otp
+├ ƒ /api/admin/moderation
+├ ƒ /api/admin/posts
+├ ƒ /api/admin/posts/[id]
+├ ƒ /api/admin/reports
+├ ƒ /api/admin/reports/[id]
+├ ƒ /api/admin/roles
+├ ƒ /api/admin/settings
+├ ƒ /api/admin/users
+├ ƒ /api/admin/users/[id]
+├ ƒ /api/auth/forgot-password
+├ ƒ /api/auth/login
+├ ƒ /api/auth/login-activity
+├ ƒ /api/auth/logout
+├ ƒ /api/auth/me
+├ ƒ /api/auth/register
+├ ƒ /api/auth/resend-verification
+├ ƒ /api/auth/reset-password
+├ ƒ /api/auth/session
+├ ƒ /api/auth/sessions
+├ ƒ /api/auth/sessions/[id]
+├ ƒ /api/auth/signup
+├ ƒ /api/auth/signup/verify
+├ ƒ /api/auth/username-available
+├ ƒ /api/auth/verify-email
+├ ƒ /api/calls
+├ ƒ /api/calls/[id]
+├ ƒ /api/calls/history
+├ ƒ /api/comments/[id]
+├ ƒ /api/comments/[id]/like
+├ ƒ /api/companies
+├ ƒ /api/companies/[id]
+├ ƒ /api/companies/[id]/activity
+├ ƒ /api/companies/[id]/analytics
+├ ƒ /api/companies/[id]/announcements
+├ ƒ /api/companies/[id]/join-requests
+├ ƒ /api/companies/[id]/join-requests/[requestId]
+├ ƒ /api/companies/[id]/members
+├ ƒ /api/companies/[id]/members/[userId]
+├ ƒ /api/companies/[id]/members/create-account
+├ ƒ /api/companies/[id]/members/otp
+├ ƒ /api/companies/[id]/posts
+├ ƒ /api/companies/[id]/teams
+├ ƒ /api/conversations
+├ ƒ /api/conversations/[id]
+├ ƒ /api/conversations/[id]/members
+├ ƒ /api/conversations/[id]/members/[userId]
+├ ƒ /api/conversations/[id]/members/[userId]/nickname
+├ ƒ /api/conversations/[id]/messages
+├ ƒ /api/conversations/[id]/mute
+├ ƒ /api/conversations/[id]/read
+├ ƒ /api/download
+├ ƒ /api/hashtags/[tag]
+├ ƒ /api/hashtags/trending
+├ ƒ /api/health
+├ ƒ /api/invitations
+├ ƒ /api/invitations/[token]
+├ ƒ /api/invitations/[token]/resend
+├ ƒ /api/invitations/[token]/revoke
+├ ƒ /api/manager-applications
+├ ƒ /api/manager-applications/[id]
+├ ƒ /api/messages/[id]
+├ ƒ /api/messages/[id]/forward
+├ ƒ /api/messages/[id]/reactions
+├ ƒ /api/nicknames
+├ ƒ /api/nicknames/[userId]
+├ ƒ /api/notifications
+├ ƒ /api/notifications/[id]/read
+├ ƒ /api/notifications/read
+├ ƒ /api/otp/verify
+├ ƒ /api/posts
+├ ƒ /api/posts/[id]
+├ ƒ /api/posts/[id]/bookmark
+├ ƒ /api/posts/[id]/comments
+├ ƒ /api/posts/[id]/like
+├ ƒ /api/posts/[id]/repost
+├ ƒ /api/presence
+├ ƒ /api/push/public-key
+├ ƒ /api/push/subscribe
+├ ƒ /api/reports
+├ ƒ /api/search
+├ ƒ /api/teams
+├ ƒ /api/teams/[id]
+├ ƒ /api/teams/[id]/chat
+├ ƒ /api/teams/[id]/members
+├ ƒ /api/teams/[id]/members/[userId]
+├ ƒ /api/uploads
+├ ƒ /api/uploads/[...path]
+├ ƒ /api/users/[username]
+├ ƒ /api/users/[username]/block
+├ ƒ /api/users/[username]/follow
+├ ƒ /api/users/[username]/followers
+├ ƒ /api/users/[username]/following
+├ ƒ /api/users/[username]/mute
+├ ƒ /api/users/[username]/unfollow
+├ ƒ /api/users/me
+├ ƒ /api/users/me/bookmarks
+├ ƒ /api/users/me/notification-preferences
+├ ƒ /api/users/me/password
+├ ƒ /bookmarks
+├ ƒ /companies
+├ ƒ /companies/new
+├ ƒ /company/[slug]
+├ ƒ /company/[slug]/teams/[teamId]
+├ ƒ /forgot-password
+├ ƒ /hashtag/[tag]
+├ ƒ /help
+├ ƒ /home
+├ ƒ /login
+├ ƒ /manage
+├ ƒ /manage/[slug]
+├ ƒ /manage/[slug]/activity
+├ ƒ /manage/[slug]/analytics
+├ ƒ /manage/[slug]/announcements
+├ ƒ /manage/[slug]/branding
+├ ƒ /manage/[slug]/invitations
+├ ƒ /manage/[slug]/join-requests
+├ ƒ /manage/[slug]/members
+├ ƒ /manage/[slug]/settings
+├ ƒ /manage/[slug]/teams
+├ ○ /manifest.webmanifest
+├ ƒ /messages
+├ ƒ /messages/[conversationId]
+├ ƒ /notifications
+├ ƒ /post/[id]
+├ ƒ /profile/[username]
+├ ƒ /profile/[username]/followers
+├ ƒ /profile/[username]/following
+├ ƒ /reset-password
+├ ƒ /search
+├ ƒ /settings
+├ ƒ /settings/manager/apply
+├ ƒ /signup
+├ ƒ /terms
+├ ƒ /verify-email
+└ ƒ /world
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

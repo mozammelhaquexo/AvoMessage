@@ -1,0 +1,14 @@
+Add backup infrastructure: daily cron, pre-migration guard, health row counts
+
+- vercel.json: cron schedule for daily 02:00 UTC POST /api/admin/backup
+- app/api/admin/backup/route.ts: snapshot every public table to Vercel KV
+  (CRON_SECRET or SUPER_ADMIN auth; rotates last 30; excludes Session /
+  PasswordReset / OtpChallenge)
+- app/api/health/route.ts: row counts of every public user table so a
+  monitoring endpoint can alert on a silent wipe
+- scripts/apply-schema.mjs: snapshot row counts pre/post; abort the build
+  if any table's count dropped; persist snapshots to Vercel KV when KV is
+  configured
+- scripts/backup-supabase.mjs: pg_dump wrapper for off-site backups
+- docs/BACKUP_RUNBOOK.md: full recovery runbook
+- .gitignore: /backups/ (local snapshot dir)

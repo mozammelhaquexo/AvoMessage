@@ -1,0 +1,19 @@
+﻿
+> avomessage@0.1.0 build
+> next build
+
+▲ Next.js 16.3.8 (Turbopack)
+- Environments: .env.local, .env.production, .env
+✓ Running next.config.ts took 54ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 2.1min
+  Running TypeScript ...
+  Finished TypeScript in 13.6s ...
+  Collecting page data using 11 workers ...
+✓ Finished filesystem cache database compaction in 15.0s
+  Generating static pages using 11 workers (0/88) ...
+  Generating static pages using 11 workers (22/88) 
+  Generating static pages using 11 workers (44/88) 
+  Generating static pages using 11 workers (66/88) 
+✓ Generating static pages using 11 workers (88/88) in 643ms
