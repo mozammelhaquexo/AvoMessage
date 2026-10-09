@@ -29,6 +29,7 @@ import { useAuth } from "@/lib/auth-client";
 import { usePresence, useRealtimeEvent } from "@/lib/realtime/client";
 import { ServerToClient } from "@/lib/realtime/events";
 import { conversationDisplayName, formatRelative, seenState } from "@/lib/chat";
+import { DesktopNotificationPrompt } from "@/components/notifications/DesktopNotificationSetting";
 import type { ConversationView, Paginated, PublicUser } from "@/lib/types";
 
 interface ConversationListProps {
@@ -97,6 +98,14 @@ export function ConversationList({
 
   return (
     <div className="flex h-full flex-col">
+      {/* Same permission prompt the notification page uses. Renders only while
+          the browser has never been asked (and the user hasn't dismissed it) —
+          granted means the prompt has done its job; denied means re-prompting
+          would just nag about something only the browser site-settings can fix.
+          Lives ABOVE the search row so it never pushes the conversation list
+          horizontally when it appears. */}
+      <DesktopNotificationPrompt />
+
       <div className="flex items-center gap-2 p-3">
         <div className="relative flex-1">
           <Icon name="search" size={16} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
